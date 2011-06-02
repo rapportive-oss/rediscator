@@ -3,7 +3,19 @@
 if [ "$1" = "-r" ] || [ "$1" == "--setup-ruby" ]; then
   shift
 
+  echo "Setting up Ruby..."
   "$(dirname $0)/setup-ruby" || { echo "Failed to setup Ruby, giving up." >&2; exit 1; }
+  echo "Set up Ruby."
+  echo
+
+  if ! gem list --local bundler | grep -q bundler; then
+    echo "Installing Bundler..."
+    sudo gem install --no-ri --no-rdoc bundler
+    echo "Installed Bundler."
+    echo
+  fi
+
+  echo
 fi
 
 RUBY=$(which ruby)
