@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 
+if [ "$1" = "-r" ] || [ "$1" == "--setup-ruby" ]; then
+  shift
+
+  "$(dirname $0)/setup-ruby" || { echo "Failed to setup Ruby, giving up." >&2; exit 1; }
+fi
+
 RUBY=$(which ruby)
+[ $? = 0 ] || { echo "Ruby is missing!  Run '$0 --setup-ruby'." >&2; exit 2; }
 
 exec "$RUBY" \
   -rubygems \
