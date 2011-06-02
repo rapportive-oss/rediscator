@@ -1,0 +1,35 @@
+#!/bin/bash -e
+
+usage() {
+  echo "Usage:"
+  echo "    $0 [options]"
+  echo
+  echo "  Options:"
+  echo "    -g VERSION | --rubygems-version=VERSION    Version of Rubygems to install"
+}
+
+OPTS=$(getopt -o hg: --longoptions=help,rubygems-version: -n "$0" -- "$@")
+if [ $? != 0 ]; then usage; exit 1; fi
+eval set -- "$OPTS"
+
+rubygems_version=1.8.5
+
+while true; do
+  case "$1" in
+    -g|--rubygems-version) rubygems_version="$2"; shift 2;;
+    -h|--help) usage; exit 0;;
+    --) shift; break;;
+    *) usage; exit 0;;
+  esac
+done
+
+sudo apt-get install -y ruby1.8
+sudo ln -sf /usr/bin/ruby{1.8,}
+mkdir -p opt
+pushd opt
+  wget -O- http://production.cf.rubygems.org/rubygems/rubygems-${rubygems_version}.tgz | tar zxvf -
+  pushd rubygems-${rubygems_version}
+    sudo ruby setup.rb
+    sudo ln -sf /usr/bin/gem{1.8,}
+  popd
+popd
