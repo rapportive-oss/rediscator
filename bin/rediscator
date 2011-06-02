@@ -1,9 +1,9 @@
-#!/usr/bin/env ruby
+#!/usr/bin/env bash
 
-require 'rubygems'
-require 'bundler/setup'
+RUBY=$(which ruby)
 
-$: << File.join(File.dirname(__FILE__), '..', 'lib')
-require 'rediscator'
-
-Rediscator::App.start
+exec "$RUBY" \
+  -rubygems \
+  -I"$(dirname $0)/../lib" \
+  -e 'require "bundler/setup"; require "rediscator"; $0 = "rediscator"; Rediscator::App.start' \
+  "$@"
