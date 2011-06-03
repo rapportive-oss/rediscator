@@ -11,8 +11,6 @@ module Rediscator
 
     REQUIRED_PACKAGES = %w(git-core build-essential tcl8.5 pwgen)
     REDIS_USER = 'redis'
-    REDIS_VERSION = '2.2.8'
-    RUN_REDIS_TESTS = false
 
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
@@ -24,7 +22,12 @@ module Rediscator
     }
 
     desc 'setup', 'Set up Redis'
+    method_option :redis_version, :required => true, :desc => "Version of Redis to install"
+    method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     def setup
+      redis_version = options[:redis_version]
+      run_tests = options[:run_tests]
+
       package_install! *REQUIRED_PACKAGES
 
       unless user_exists?(REDIS_USER)
@@ -39,14 +42,14 @@ module Rediscator
               run! *%w(git clone https://github.com/antirez/redis.git)
             end
             inside 'redis' do
-              unless git_branch_exists? REDIS_VERSION
-                run! :git, :checkout, '-b', REDIS_VERSION, REDIS_VERSION
+              unless git_branch_exists? redis_version
+                run! :git, :checkout, '-b', redis_version, redis_version
               end
               run! :make
-              run! :make, :test if RUN_REDIS_TESTS
+              run! :make, :test if run_tests
             end
 
-            redis_dir = "redis-#{REDIS_VERSION}"
+            redis_dir = "redis-#{redis_version}"
             run! :mkdir, '-p', *%w(bin etc log tmp).map {|dir| "#{redis_dir}/#{dir}" }
             inside redis_dir do
               pwd = Dir.pwd
