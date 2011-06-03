@@ -24,7 +24,7 @@ RUBY=$(which ruby)
 BUNDLE=$(which bundle)
 [ $? = 0 ] || { echo "Bundler is missing!  Run '$0 --setup-ruby'." >&2; exit 3; }
 
-"$BUNDLE" install
+"$BUNDLE" install --quiet
 
 exec "$RUBY" \
   -rubygems \
