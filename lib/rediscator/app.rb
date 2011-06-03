@@ -9,12 +9,10 @@ module Rediscator
     include Thor::Actions
     include Util
 
-    REQUIRED_PACKAGES = %w(git-core build-essential tcl8.5)
+    REQUIRED_PACKAGES = %w(git-core build-essential tcl8.5 pwgen)
     REDIS_USER = 'redis'
     REDIS_VERSION = '2.2.8'
     RUN_REDIS_TESTS = false
-
-    REDIS_SUPER_SECRET_PASSWORD = 'super_secret_01'
 
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
@@ -52,16 +50,19 @@ module Rediscator
             run! :mkdir, '-p', *%w(bin etc log tmp).map {|dir| "#{redis_dir}/#{dir}" }
             inside redis_dir do
               pwd = Dir.pwd
+              redis_password = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
+              redis_properties = {
+                :REDIS_DIR => pwd,
+                :REDIS_PASSWORD => redis_password,
+              }
 
               %w(server cli).each do |thing|
                 run! *%W(cp ../redis/src/redis-#{thing} bin)
               end
+
               File.open('../redis/redis.conf') do |default_conf|
                 File.open('/tmp/redis.conf', 'w') do |new_conf|
-                  substitution_variables = {
-                    :REDIS_DIR => pwd,
-                    :REDIS_PASSWORD => REDIS_SUPER_SECRET_PASSWORD,
-                  }.map {|name, value| ["[#{name}]", value] }
+                  substitution_variables = redis_properties.map {|name, value| ["[#{name}]", value] }
 
                   config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
                     [pattern, apply_substitutions(replacement, substitution_variables)]
@@ -80,7 +81,12 @@ module Rediscator
               end
 
               run! *%W(#{pwd}/bin/redis-server #{pwd}/etc/redis.conf)
-              run! *%W(bin/redis-cli -a #{REDIS_SUPER_SECRET_PASSWORD} ping)
+              run! *%W(bin/redis-cli -a #{redis_password} ping)
+
+              puts "Properties:"
+              redis_properties.each do |property, value|
+                puts "\t#{property}:\t#{value}"
+              end
             end
           end
         end
