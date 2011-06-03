@@ -54,8 +54,8 @@ module Rediscator
               File.open('../redis/redis.conf') do |default_conf|
                 File.open('/tmp/redis.conf', 'w') do |new_conf|
                   substitution_variables = {
-                    :redis_dir => pwd,
-                  }.map {|name, value| ['[' + name.to_s.upcase + ']', value] }
+                    :REDIS_DIR => pwd,
+                  }.map {|name, value| ["[#{name}]", value] }
 
                   config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
                     [pattern, apply_substitutions(replacement, substitution_variables)]
