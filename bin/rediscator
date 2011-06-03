@@ -21,6 +21,11 @@ fi
 RUBY=$(which ruby)
 [ $? = 0 ] || { echo "Ruby is missing!  Run '$0 --setup-ruby'." >&2; exit 2; }
 
+BUNDLE=$(which bundle)
+[ $? = 0 ] || { echo "Bundler is missing!  Run '$0 --setup-ruby'." >&2; exit 3; }
+
+"$BUNDLE" install
+
 exec "$RUBY" \
   -rubygems \
   -I"$(dirname $0)/../lib" \
