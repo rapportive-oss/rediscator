@@ -70,10 +70,14 @@ module Rediscator
                   substituted_conf = apply_substitutions(default_conf.read, config_substitutions)
 
                   new_conf.write(substituted_conf)
+                  new_conf.flush
+
+                  run! *%w(cp /tmp/redis.conf etc)
+                  run! *%w(chmod 640 etc/redis.conf)
+
+                  File.unlink('/tmp/redis.conf')
                 end
               end
-              run! *%w(cp /tmp/redis.conf etc)
-              run! *%w(chmod 640 etc/redis.conf)
 
               run! *%W(#{pwd}/bin/redis-server #{pwd}/etc/redis.conf)
               run! *%W(bin/redis-cli -a #{REDIS_SUPER_SECRET_PASSWORD} ping)
