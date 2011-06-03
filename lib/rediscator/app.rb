@@ -14,12 +14,15 @@ module Rediscator
     REDIS_VERSION = '2.2.8'
     RUN_REDIS_TESTS = false
 
+    REDIS_SUPER_SECRET_PASSWORD = 'super_secret_01'
+
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
       /^pidfile .*$/ => 'pidfile [REDIS_DIR]/tmp/redis.pid',
       /^loglevel .*$/ => 'loglevel notice',
       /^logfile .*$/ => 'logfile [REDIS_DIR]/log/redis.log',
       /^dir .*$/ => 'dir [REDIS_DIR]',
+      /^# requirepass .*$/ => 'requirepass [REDIS_PASSWORD]',
     }
 
     desc 'setup', 'Set up Redis'
@@ -55,6 +58,7 @@ module Rediscator
                 File.open('/tmp/redis.conf', 'w') do |new_conf|
                   substitution_variables = {
                     :REDIS_DIR => pwd,
+                    :REDIS_PASSWORD => REDIS_SUPER_SECRET_PASSWORD,
                   }.map {|name, value| ["[#{name}]", value] }
 
                   config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
@@ -67,9 +71,10 @@ module Rediscator
                 end
               end
               run! *%w(cp /tmp/redis.conf etc)
+              run! *%w(chmod 640 etc/redis.conf)
 
               run! *%W(#{pwd}/bin/redis-server #{pwd}/etc/redis.conf)
-              run! *%w(bin/redis-cli ping)
+              run! *%W(bin/redis-cli -a #{REDIS_SUPER_SECRET_PASSWORD} ping)
             end
           end
         end
