@@ -14,6 +14,14 @@ module Rediscator
     REDIS_VERSION = '2.2.8'
     RUN_REDIS_TESTS = false
 
+    CONFIG_SUBSTITUTIONS = {
+      /^daemonize .*$/ => 'daemonize yes',
+      /^pidfile .*$/ => 'pidfile [REDIS_DIR]/tmp/redis.pid',
+      /^loglevel .*$/ => 'loglevel notice',
+      /^logfile .*$/ => 'logfile [REDIS_DIR]/log/redis.log',
+      /^dir .*$/ => 'dir [REDIS_DIR]',
+    }
+
     desc 'setup', 'Set up Redis'
     def setup
       package_install! *REQUIRED_PACKAGES
@@ -45,13 +53,17 @@ module Rediscator
               end
               File.open('../redis/redis.conf') do |default_conf|
                 File.open('/tmp/redis.conf', 'w') do |new_conf|
-                  new_conf.write(
-                    default_conf.read.
-                      sub(/^daemonize .*$/, 'daemonize yes').
-                      sub(/^pidfile .*$/, "pidfile #{pwd}/tmp/redis.pid").
-                      sub(/^loglevel .*$/, 'loglevel notice').
-                      sub(/^logfile .*$/, "logfile #{pwd}/log/redis.log").
-                      sub(/^dir .*$/, "dir #{pwd}"))
+                  substitution_variables = {
+                    :redis_dir => pwd,
+                  }.map {|name, value| ['[' + name.to_s.upcase + ']', value] }
+
+                  config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
+                    [pattern, apply_substitutions(replacement, substitution_variables)]
+                  end
+
+                  substituted_conf = apply_substitutions(default_conf.read, config_substitutions)
+
+                  new_conf.write(substituted_conf)
                 end
               end
               run! *%w(cp /tmp/redis.conf etc)

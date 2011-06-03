@@ -40,5 +40,11 @@ module Rediscator
         passwd.any? {|line| user.to_s == line.split(':')[0] }
       end
     end
+
+    def apply_substitutions(string, substitutions)
+      substitutions.inject(string) do |str, (pattern, replacement)|
+        str.gsub(pattern, replacement)
+      end
+    end
   end
 end
