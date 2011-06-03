@@ -1,10 +1,23 @@
+require 'open4'
+
 module Rediscator
   module Util
     class ShellError < StandardError; end
 
     def system!(*args)
-      puts args.join(' ')
-      system(*args.map(&:to_s)) or raise ShellError, "command #{args.join(' ').inspect} failed!"
+      command = args.join(' ')
+      puts command
+
+      out = ''
+      err = ''
+      args = args.map(&:to_s) + [{:stdout => out, :stderr => err}]
+      open4.spawn(*args)
+      puts out
+      out
+    rescue Open4::SpawnError => e
+      raise ShellError, "command #{command} failed with status #{e.exitstatus}: #{err}"
+    rescue SystemCallError => e
+      raise ShellError, "command #{command} failed: #{e}"
     end
 
     def sudo!(*args)
