@@ -41,7 +41,9 @@ module Rediscator
               run! *%w(git clone https://github.com/antirez/redis.git)
             end
             inside 'redis' do
-              run! :git, :checkout, '-b', REDIS_VERSION, REDIS_VERSION # TODO make this idempotent
+              unless git_branch_exists? REDIS_VERSION
+                run! :git, :checkout, '-b', REDIS_VERSION, REDIS_VERSION
+              end
               run! :make
               run! :make, :test if RUN_REDIS_TESTS
             end

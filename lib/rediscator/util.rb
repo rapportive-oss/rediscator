@@ -54,6 +54,10 @@ module Rediscator
       end
     end
 
+    def git_branch_exists?(branch)
+      !run!(:git, :branch).grep(/\b#{Regexp.escape branch}\b/).empty?
+    end
+
     def apply_substitutions(string, substitutions)
       substitutions.inject(string) do |str, (pattern, replacement)|
         str.gsub(pattern, replacement)
