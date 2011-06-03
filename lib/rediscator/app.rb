@@ -9,29 +9,35 @@ module Rediscator
     include Thor::Actions
     include Util
 
+    REQUIRED_PACKAGES = %w(git-core build-essential tcl8.5)
+    REDIS_USER = 'redis'
+    REDIS_VERSION = '2.2.8'
+    RUN_REDIS_TESTS = false
+
     desc 'setup', 'Set up Redis'
     def setup
-      package_install! *%w(git-core build-essential tcl8.5)
+      package_install! *REQUIRED_PACKAGES
 
-      unless user_exists?(:redis)
-        sudo! *%w(adduser --disabled-login --gecos Redis,,, redis)
+      unless user_exists?(REDIS_USER)
+        sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
       end
 
-      as :redis do
-        inside '~redis' do
+      as REDIS_USER do
+        inside "~#{REDIS_USER}" do
           run! *%w(mkdir -p opt)
           inside 'opt' do
             unless File.exists?('redis')
               run! *%w(git clone https://github.com/antirez/redis.git)
             end
             inside 'redis' do
-              run! *%w(git checkout -b 2.2.8 2.2.8) # TODO make this idempotent
+              run! :git, :checkout, '-b', REDIS_VERSION, REDIS_VERSION # TODO make this idempotent
               run! :make
-              run! :make, :test if false # TODO
+              run! :make, :test if RUN_REDIS_TESTS
             end
 
-            run! :mkdir, '-p', *%w(bin etc log tmp).map {|dir| "redis-2.2.8/#{dir}" }
-            inside 'redis-2.2.8' do
+            redis_dir = "redis-#{REDIS_VERSION}"
+            run! :mkdir, '-p', *%w(bin etc log tmp).map {|dir| "#{redis_dir}/#{dir}" }
+            inside redis_dir do
               pwd = Dir.pwd
 
               %w(server cli).each do |thing|
