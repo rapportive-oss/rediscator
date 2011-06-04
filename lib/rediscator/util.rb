@@ -5,12 +5,23 @@ module Rediscator
     class ShellError < StandardError; end
 
     def system!(*args)
+      out = ''
+      err = ''
+      default_opts = {:stdout => out, :stderr => err}
+
+      opts = if args.last.is_a? Hash
+               args.pop
+             else
+               {}
+             end
+
+      invalid_opts = opts.keys - [:stdin]
+      raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}" unless invalid_opts.empty?
+
       command = args.join(' ')
       puts command
 
-      out = ''
-      err = ''
-      args = args.map(&:to_s) + [{:stdout => out, :stderr => err}]
+      args = args.map(&:to_s) + [default_opts.merge(opts)]
       open4.spawn(*args)
       puts out
       out
