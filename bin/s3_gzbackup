@@ -1,0 +1,38 @@
+#!/bin/bash -e
+
+usage() {
+  echo "Usage:"
+  echo "    $0 [options] SOURCE_FILE S3_DESTINATION"
+  echo
+  echo "  Options:"
+  echo "    -t DIR | --temp-dir=DIR    Use DIR instead of /tmp"
+}
+
+OPTS=$(getopt -o ht: --longoptions=help,temp-dir: -n "$0" -- "$@") || { usage; exit 1; }
+eval set -- "$OPTS"
+
+temp=/tmp
+
+while true; do
+  case "$1" in
+    -h|--help) usage; exit 0;;
+    -t|--temp-dir) temp="$2"; shift 2;;
+    --) shift; break;;
+    *) usage; exit 0;;
+  esac
+done
+
+[ "$1" ] || { usage; exit 1; }
+src="$1"
+name=$(basename "$1")
+[ "$2" ] || { usage; exit 2; }
+dest="$2"
+
+today=$(date -u --rfc-3339=date)
+
+tempfile=$(mktemp --tmpdir="$temp")
+trap 'rm "$tempfile"' EXIT
+
+gzip <"$src" >"$tempfile"
+
+s3cmd --no-progress put "$tempfile" "$dest/$today-$name.gz"
