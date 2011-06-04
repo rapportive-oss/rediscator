@@ -26,11 +26,15 @@ module Rediscator
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
     method_option :backup_s3_prefix, :required => true, :desc => "S3 bucket and prefix for daily backups, e.g. s3://backups/redis"
+    method_option :aws_access_key, :required => true, :desc => "AWS access key ID for backups and monitoring"
+    method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for backups and monitoring"
     def setup
       redis_version = options[:redis_version]
       run_tests = options[:run_tests]
       backup_tempdir = options[:backup_tempdir]
       backup_s3_prefix = options[:backup_s3_prefix]
+      aws_access_key = options[:aws_access_key]
+      aws_secret_key = options[:aws_secret_key]
 
       redis_dir = "redis-#{redis_version}"
       redis_path = "~#{REDIS_USER}/opt/#{redis_dir}"
@@ -115,6 +119,19 @@ module Rediscator
 
           sudo! :mkdir, '-p', backup_tempdir
           sudo! :chmod, 'a+rwxt', backup_tempdir
+
+          s3cfg = <<-S3CFG
+[default]
+access_key = #{aws_access_key}
+secret_key = #{aws_secret_key}
+          S3CFG
+          File.open('/tmp/.s3cfg', 'w') do |new_s3cfg|
+            new_s3cfg.write(s3cfg)
+            new_s3cfg.flush
+            run! *%w(cp /tmp/.s3cfg .)
+            run! *%w(chmod 600 .s3cfg)
+            File.unlink('/tmp/.s3cfg')
+          end
 
           backup_command = %W(
             ~#{REDIS_USER}/bin/s3_gzbackup
