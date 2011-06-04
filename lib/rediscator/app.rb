@@ -59,6 +59,16 @@ module Rediscator
                 :REDIS_PASSWORD => redis_password,
               }
 
+              if File.exists?('tmp/redis.pid')
+                File.open('tmp/redis.pid') {|pidfile| run! :kill, pidfile.read.strip }
+                printf 'Waiting for Redis to die...'
+                while File.exists?('tmp/redis.pid')
+                  sleep 1
+                  printf '.'
+                end
+                puts
+              end
+
               %w(server cli).each do |thing|
                 run! *%W(cp ../redis/src/redis-#{thing} bin)
               end
