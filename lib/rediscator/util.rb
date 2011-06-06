@@ -15,8 +15,7 @@ module Rediscator
                {}
              end
 
-      invalid_opts = opts.keys - [:stdin]
-      raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}" unless invalid_opts.empty?
+      assert_valid_keys! opts, :stdin
 
       command = args.join(' ')
       puts command
@@ -106,8 +105,7 @@ module Rediscator
         [:mon, :month],
         [:dow, :day_of_week],
       ]
-      invalid_opts = schedule_opts.keys - schedule_parts.flatten
-      raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}" unless invalid_opts.empty?
+      assert_valid_keys! schedule_opts, *schedule_parts.flatten
       raise ArgumentError, "must specify a schedule" if schedule_opts.empty?
 
       labels = schedule_parts.map(&:first) + ['command']
@@ -124,6 +122,11 @@ module Rediscator
 
       header + "\n" + entry + "\n"
       # stick a newline on the end because cron is picky about such things
+    end
+
+    def assert_valid_keys!(opts, *keys)
+      invalid_opts = opts.keys - keys
+      raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}", caller unless invalid_opts.empty?
     end
   end
 end
