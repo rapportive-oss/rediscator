@@ -137,24 +137,7 @@ secret_key = #{aws_secret_key}
             '#{backup_s3_prefix}'
           ).join(' ')
 
-          crontab_entry = <<-CRONTAB
-# m h  dom mon dow command
-42  03 *   *   *   #{backup_command}
-          CRONTAB
-
-          old_crontab = begin
-                          run! :crontab, '-l'
-                        rescue ShellError => se
-                          if se.message =~ /\bno crontab for #{REDIS_USER}\b/
-                            ''
-                          else
-                            raise
-                          end
-                        end
-          if old_crontab.grep(/#{Regexp.escape backup_command}$/).empty?
-            new_crontab = old_crontab + "\n" + crontab_entry
-            run! :crontab, '-', :stdin => new_crontab
-          end
+          ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
         end
       end
 

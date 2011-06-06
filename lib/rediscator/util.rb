@@ -74,5 +74,56 @@ module Rediscator
         str.gsub(pattern, replacement)
       end
     end
+
+    def ensure_crontab_entry!(command, schedule_opts)
+      entry = crontab_entry(command, schedule_opts)
+
+      old_crontab = begin
+                      run! :crontab, '-l'
+                    rescue ShellError => se
+                      if se.message =~ /\bno crontab for\b/
+                        ''
+                      else
+                        raise
+                      end
+                    end
+      if old_crontab.grep(/\s+#{Regexp.escape command}$/).empty?
+        new_crontab = old_crontab + "\n\n" + entry
+        run! :crontab, '-', :stdin => new_crontab
+        new_crontab
+      else
+        old_crontab
+      end
+    end
+
+    # To run a command every minute, specify :minute => '*' (that would make a
+    # surprising default!).
+    def crontab_entry(command, schedule_opts)
+      schedule_parts = [
+        [:m, :minute],
+        [:h, :hour],
+        [:dom, :day],
+        [:mon, :month],
+        [:dow, :day_of_week],
+      ]
+      invalid_opts = schedule_opts.keys - schedule_parts.flatten
+      raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}" unless invalid_opts.empty?
+      raise ArgumentError, "must specify a schedule" if schedule_opts.empty?
+
+      labels = schedule_parts.map(&:first) + ['command']
+      header = '# ' + labels.join("\t")
+      schedule = schedule_parts.map do |label, friendly|
+        part = schedule_opts.values_at(label, friendly).compact
+        case part.size
+        when 1; part[0].to_s
+        when 2; raise ArgumentError, "can't specify both :#{label} and :#{friendly}"
+        else; '*'
+        end
+      end
+      entry = (schedule + [command]).join("\t")
+
+      header + "\n" + entry + "\n"
+      # stick a newline on the end because cron is picky about such things
+    end
   end
 end
