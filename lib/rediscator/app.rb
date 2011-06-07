@@ -130,6 +130,9 @@ secret_key = #{aws_secret_key}
             '#{backup_s3_prefix}'
           ).join(' ')
 
+          # make sure dump.rdb exists so the backup job doesn't fail
+          run! "#{setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', setup_properties[:REDIS_PASSWORD], :save, :echo => false
+
           ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
         end
       end
