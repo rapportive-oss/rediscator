@@ -15,10 +15,18 @@ module Rediscator
       tcl8.5
       pwgen
       s3cmd
+      openjdk-6-jre-headless
+      unzip
     )
+
+    OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
 
     REDIS_USER = 'redis'
     REDIS_REPO = 'https://github.com/antirez/redis.git'
+
+    CLOUDWATCH_USER = 'cloudwatch'
+    CLOUDWATCH_TOOLS_ZIP = 'CloudWatch-2010-08-01.zip'
+    CLOUDWATCH_TOOLS_URL = "http://ec2-downloads.s3.amazonaws.com/#{CLOUDWATCH_TOOLS_ZIP}"
 
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
@@ -30,6 +38,7 @@ module Rediscator
     }
 
     desc 'setup', 'Set up Redis'
+    method_option :machine_name, :default => `hostname`, :desc => "Name identifying this Redis machine"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
@@ -37,6 +46,7 @@ module Rediscator
     method_option :aws_access_key, :required => true, :desc => "AWS access key ID for backups and monitoring"
     method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for backups and monitoring"
     def setup
+      machine_name = options[:machine_name]
       redis_version = options[:redis_version]
       run_tests = options[:run_tests]
       backup_tempdir = options[:backup_tempdir]
@@ -134,6 +144,61 @@ secret_key = #{aws_secret_key}
           run! "#{setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', setup_properties[:REDIS_PASSWORD], :save, :echo => false
 
           ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
+        end
+      end
+
+
+      unless user_exists?(CLOUDWATCH_USER)
+        sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{CLOUDWATCH_USER})
+      end
+
+      as CLOUDWATCH_USER do
+        inside "~#{CLOUDWATCH_USER}" do
+          home = Dir.pwd
+
+          run! *%w(mkdir -p opt)
+          cloudwatch_dir = nil
+          inside 'opt' do
+            if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
+              run! :wget, '-q', CLOUDWATCH_TOOLS_URL unless File.exists? CLOUDWATCH_TOOLS_ZIP
+              run! :unzip, CLOUDWATCH_TOOLS_ZIP
+            end
+            cloudwatch_dirs = Dir.glob('CloudWatch-*').select {|dir| File.directory? dir }
+            case cloudwatch_dirs.size
+            when 1; cloudwatch_dir = cloudwatch_dirs[0]
+            when 0; raise 'Failed to install CloudWatch tools!'
+            else; raise 'Multiple versions of CloudWatch tools installed; confused.'
+            end
+          end
+          cloudwatch_path = "#{home}/opt/#{cloudwatch_dir}"
+
+          aws_credentials_path = "#{home}/.aws-credentials"
+          create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
+AWSAccessKeyId=#{aws_access_key}
+AWSSecretKey=#{aws_secret_key}
+          CREDS
+
+          run! *%w(mkdir -p bin)
+
+          env_vars = [
+            [:JAVA_HOME, OPENJDK_JAVA_HOME],
+            [:AWS_CLOUDWATCH_HOME, cloudwatch_path],
+            [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
+            [:AWS_CREDENTIAL_FILE, aws_credentials_path],
+          ]
+          env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
+            "#{var}=#{value}; export #{var}"
+          end).join("\n")
+          cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
+          create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
+
+          scripts = %w(
+            log-cloudwatch-metrics.sh
+          ).map {|script| "#{rediscator_path}/bin/#{script}" }
+          run! :cp, *(scripts + [:bin])
+
+          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh '#{machine_name}'"
+          ensure_crontab_entry! monitor_command, :minute => '*'
         end
       end
 
