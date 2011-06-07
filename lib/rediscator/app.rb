@@ -107,7 +107,7 @@ module Rediscator
               end
 
               run! *%W(#{setup_properties[:REDIS_PATH]}/bin/redis-server #{setup_properties[:REDIS_PATH]}/etc/redis.conf)
-              run! *%W(bin/redis-cli -a #{setup_properties[:REDIS_PASSWORD]} ping)
+              run! 'bin/redis-cli', '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
             end
           end
 
