@@ -9,7 +9,14 @@ module Rediscator
     include Thor::Actions
     include Util
 
-    REQUIRED_PACKAGES = %w(git-core build-essential tcl8.5 pwgen s3cmd)
+    REQUIRED_PACKAGES = %w(
+      git-core
+      build-essential
+      tcl8.5
+      pwgen
+      s3cmd
+    )
+
     REDIS_USER = 'redis'
 
     CONFIG_SUBSTITUTIONS = {
