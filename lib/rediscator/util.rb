@@ -30,9 +30,9 @@ module Rediscator
       puts out
       out
     rescue Open4::SpawnError => e
-      raise ShellError, "command #{command} failed with status #{e.exitstatus}: #{err}"
+      raise ShellError, "command '#{command}' failed with status #{e.exitstatus}: #{err}"
     rescue SystemCallError => e
-      raise ShellError, "command #{command} failed: #{e}"
+      raise ShellError, "command '#{command}' failed: #{e}"
     end
 
     def without_echo
