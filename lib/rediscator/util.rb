@@ -15,10 +15,15 @@ module Rediscator
                {}
              end
 
-      assert_valid_keys! opts, :stdin
+      assert_valid_keys! opts, :echo, :stdin
+
+      echo = opts.delete :echo
+      if echo.nil?
+        echo = !@no_echo
+      end
 
       command = args.join(' ')
-      puts command
+      puts command if echo
 
       args = args.map(&:to_s) + [default_opts.merge(opts)]
       open4.spawn(*args)
@@ -28,6 +33,14 @@ module Rediscator
       raise ShellError, "command #{command} failed with status #{e.exitstatus}: #{err}"
     rescue SystemCallError => e
       raise ShellError, "command #{command} failed: #{e}"
+    end
+
+    def without_echo
+      old_noecho = @no_echo
+      @no_echo = true
+      yield
+    ensure
+      @no_echo = old_noecho
     end
 
     def sudo!(*args)
