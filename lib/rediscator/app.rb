@@ -18,6 +18,7 @@ module Rediscator
     )
 
     REDIS_USER = 'redis'
+    REDIS_REPO = 'https://github.com/antirez/redis.git'
 
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
@@ -61,7 +62,7 @@ module Rediscator
           run! *%w(mkdir -p opt)
           inside 'opt' do
             unless File.exists?('redis')
-              run! *%w(git clone https://github.com/antirez/redis.git)
+              run! :git, :clone, REDIS_REPO
             end
             inside 'redis' do
               unless git_branch_exists? redis_version
