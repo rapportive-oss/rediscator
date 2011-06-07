@@ -50,6 +50,7 @@ module Rediscator
         :REDIS_VERSION => redis_version,
       }
 
+      sudo! 'apt-get', :update
       package_install! *REQUIRED_PACKAGES
 
       unless user_exists?(REDIS_USER)
