@@ -15,22 +15,27 @@ module Rediscator
                {}
              end
 
-      assert_valid_keys! opts, :echo, :stdin
+      assert_valid_keys! opts, :echo, :stdin, :print_stdout
 
       echo = opts.delete :echo
       if echo.nil?
         echo = !@no_echo
       end
 
+      print_stdout = opts.delete :print_stdout
+
       command = args.join(' ')
       puts command if echo
 
       args = args.map(&:to_s) + [default_opts.merge(opts)]
       open4.spawn(*args)
-      puts out
+      puts out if print_stdout
       out
     rescue Open4::SpawnError => e
-      raise ShellError, "command '#{command}' failed with status #{e.exitstatus}: #{err}"
+      message = "command '#{command}' failed with status #{e.exitstatus}"
+      message << ': ' << err.strip unless err.strip.empty?
+      message << "\nSTDOUT for '#{command}':\n---------------\n#{out.strip}" unless out.strip.empty?
+      raise ShellError, message
     rescue SystemCallError => e
       raise ShellError, "command '#{command}' failed: #{e}"
     end
