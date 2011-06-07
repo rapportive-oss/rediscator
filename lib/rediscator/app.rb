@@ -86,25 +86,16 @@ module Rediscator
                 run! *%W(cp ../redis/src/redis-#{thing} bin)
               end
 
-              File.open('../redis/redis.conf') do |default_conf|
-                File.open('/tmp/redis.conf', 'w') do |new_conf|
-                  substitution_variables = setup_properties.map {|name, value| ["[#{name}]", value] }
+              substitution_variables = setup_properties.map {|name, value| ["[#{name}]", value] }
 
-                  config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-                    [pattern, apply_substitutions(replacement, substitution_variables)]
-                  end
-
-                  substituted_conf = apply_substitutions(default_conf.read, config_substitutions)
-
-                  new_conf.write(substituted_conf)
-                  new_conf.flush
-
-                  run! *%w(cp /tmp/redis.conf etc)
-                  run! *%w(chmod 640 etc/redis.conf)
-
-                  File.unlink('/tmp/redis.conf')
-                end
+              config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
+                [pattern, apply_substitutions(replacement, substitution_variables)]
               end
+
+              default_conf = File.read('../redis/redis.conf')
+              substituted_conf = apply_substitutions(default_conf, config_substitutions)
+
+              create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
 
               run! *%W(#{setup_properties[:REDIS_PATH]}/bin/redis-server #{setup_properties[:REDIS_PATH]}/etc/redis.conf)
               run! 'bin/redis-cli', '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
@@ -117,18 +108,11 @@ module Rediscator
           sudo! :mkdir, '-p', backup_tempdir
           sudo! :chmod, 'a+rwxt', backup_tempdir
 
-          s3cfg = <<-S3CFG
+          create_file! '.s3cfg', <<-S3CFG, :permissions => '600'
 [default]
 access_key = #{aws_access_key}
 secret_key = #{aws_secret_key}
           S3CFG
-          File.open('/tmp/.s3cfg', 'w') do |new_s3cfg|
-            new_s3cfg.write(s3cfg)
-            new_s3cfg.flush
-            run! *%w(cp /tmp/.s3cfg .)
-            run! *%w(chmod 600 .s3cfg)
-            File.unlink('/tmp/.s3cfg')
-          end
 
           backup_command = %W(
             ~#{REDIS_USER}/bin/s3_gzbackup

@@ -86,6 +86,15 @@ module Rediscator
       !run!(:git, :branch).grep(/\b#{Regexp.escape branch}\b/).empty?
     end
 
+    def create_file!(path, contents, opts = {})
+      assert_valid_keys! opts, :permissions
+      raise ArgumentError, "Don't pass a number to :permissions, octal literals will trip you up" if opts[:permissions].is_a? Numeric
+
+      run! :touch, path
+      run! :chmod, opts[:permissions], path if opts[:permissions]
+      run! :tee, path, :stdin => contents
+    end
+
     def apply_substitutions(string, substitutions)
       substitutions.inject(string) do |str, (pattern, replacement)|
         str.gsub(pattern, replacement)
