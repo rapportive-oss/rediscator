@@ -193,6 +193,8 @@ AWSSecretKey=#{aws_secret_key}
           create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
 
           scripts = %w(
+            free-disk-kbytes.sh
+            free-ram-percent.sh
             log-cloudwatch-metrics.sh
           ).map {|script| "#{rediscator_path}/bin/#{script}" }
           run! :cp, *(scripts + [:bin])
