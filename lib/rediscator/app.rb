@@ -291,6 +291,21 @@ export PATH=$PATH:$HOME/bin
             setup_cloudwatch_alarm! alarm_options
           end
 
+          if options[:ec2]
+            setup_cloudwatch_alarm! shared_alarm_options.merge({
+              :alarm_name => "#{options[:machine_name]}: CPU Usage",
+              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} is using a lot of CPU.",
+
+              :namespace => 'AWS/EC2',
+              :metric_name => :CPUUtilization,
+              :dimensions => "InstanceId=#{metric_dimensions[:InstanceId]}",
+
+              :threshold => 90,
+              :comparison_operator => :GreaterThanThreshold,
+              :unit => :Percent,
+            })
+          end
+
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
 
           monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
