@@ -42,6 +42,7 @@ module Rediscator
     method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
     method_option :cloudwatch_namespace, :default => `hostname`, :desc => "Namespace for CloudWatch metrics"
+    method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
@@ -192,6 +193,14 @@ AWSSecretKey=#{aws_secret_key}
           env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
             "#{var}=#{value}; export #{var}"
           end).join("\n")
+          env_vars_for_env = env_vars.map do |var, value|
+            # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
+            expanded = value.
+              gsub('$PATH', ENV['PATH']).
+              gsub('$AWS_CLOUDWATCH_HOME', setup_properties[:CLOUDWATCH_TOOLS_PATH])
+            "#{var}=#{expanded}"
+          end
+
           cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
           create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
 
@@ -211,13 +220,13 @@ export PATH=$PATH:$HOME/bin
             instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
             metric_dimensions[:InstanceId] = instance_id
           end
-          setup_properties[:CLOUDWATCH_DIMENSIONS] = metric_dimensions.map {|k, v| "#{k}=#{v}" }.join(',') 
+          setup_properties[:CLOUDWATCH_DIMENSIONS] = metric_dimensions.map {|k, v| "#{k}=#{v}" }.join(',')
 
           [
-             # friendly     metric-name      script               unit
-            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh  Percent  ),
-            %w(Disk\ Space  DiskSpaceKBytes  free-disk-kbytes.sh  Kilobytes),
-          ].each do |friendly, metric, script, unit|
+             # friendly     metric-name      script               unit       minimum
+            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh  Percent    20),
+            %w(Disk\ Space  DiskSpaceKBytes  free-disk-kbytes.sh  Kilobytes  2097152),
+          ].each do |friendly, metric, script, unit, minimum|
             run! :cp, "#{rediscator_path}/bin/#{script}", :bin
 
             metric_script << %W(
@@ -228,6 +237,37 @@ export PATH=$PATH:$HOME/bin
               --unit '#{unit}'
               --value "$(#{script})"
             ).join(' ') << "\n"
+
+            # TODO alarm idempotence
+            # (Seems not to create duplicate alarms, because CloudWatch seems
+            # to dedupe them by name, but it does seem to re-send the initial
+            # "everything is fine" notification email each time you run it.)
+            alarm_options = %W(
+              --alarm-name #{options[:machine_name]}:\ #{friendly}
+              --alarm-description Alerts\ if\ #{options[:machine_role]}\ machine\ #{options[:machine_name]}\ is\ running\ low\ on\ #{friendly}.
+
+              --namespace #{options[:cloudwatch_namespace]}
+              --metric-name #{metric}
+              --dimensions #{setup_properties[:CLOUDWATCH_DIMENSIONS]}
+
+              --statistic Average
+              --comparison-operator LessThanThreshold
+              --threshold #{minimum}
+              --unit #{unit}
+
+              --period 60
+              --evaluation-periods 5
+            )
+            if options[:sns_topic]
+              alarm_options += %W(
+                --actions-enabled true
+                --ok-actions #{options[:sns_topic]}
+                --alarm-actions #{options[:sns_topic]}
+                --insufficient-data-actions #{options[:sns_topic]}
+              )
+            end
+
+            run! *([:env] + env_vars_for_env + %W(#{setup_properties[:CLOUDWATCH_TOOLS_PATH]}/bin/mon-put-metric-alarm) + alarm_options)
           end
 
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
