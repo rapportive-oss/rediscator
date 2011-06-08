@@ -155,5 +155,24 @@ module Rediscator
       invalid_opts = opts.keys - keys
       raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}", caller unless invalid_opts.empty?
     end
+
+    def setup_cloudwatch_alarm!(options = {})
+      cloudwatch_tools_path = options.delete(:cloudwatch_tools_path) or raise ArgumentError, 'must specify :cloudwatch_tools_path'
+      env_vars = options.delete(:env_vars) || []
+      env_vars_for_env = env_vars.map {|var, value| "#{var}=#{value}" }
+
+      options = {
+        :statistic => :Average,
+        :comparison_operator => :LessThanThreshold,
+        :period => 60,
+        :evaluation_periods => 5,
+      }.merge(options)
+
+      alarm_options = options.map do |key, value|
+        ["--" + key.to_s.gsub('_', '-'), value.to_s]
+      end.flatten
+
+      run! :env, *(env_vars_for_env + %W(#{cloudwatch_tools_path}/bin/mon-put-metric-alarm) + alarm_options)
+    end
   end
 end

@@ -209,12 +209,12 @@ AWSSecretKey=#{aws_secret_key}
           env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
             "#{var}=#{value}; export #{var}"
           end).join("\n")
-          env_vars_for_env = env_vars.map do |var, value|
+          setup_time_env_vars = env_vars.map do |var, value|
             # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
             expanded = value.
               gsub('$PATH', ENV['PATH']).
               gsub('$AWS_CLOUDWATCH_HOME', setup_properties[:CLOUDWATCH_TOOLS_PATH])
-            "#{var}=#{expanded}"
+            [var, expanded]
           end
 
           cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
@@ -238,6 +238,26 @@ export PATH=$PATH:$HOME/bin
           end
           setup_properties[:CLOUDWATCH_DIMENSIONS] = metric_dimensions.map {|k, v| "#{k}=#{v}" }.join(',')
 
+          shared_alarm_options = {
+            :cloudwatch_tools_path => setup_properties[:CLOUDWATCH_TOOLS_PATH],
+            :env_vars => setup_time_env_vars,
+
+            :namespace => options[:cloudwatch_namespace],
+            :dimensions => setup_properties[:CLOUDWATCH_DIMENSIONS],
+          }
+          if options[:sns_topic]
+            topic = options[:sns_topic]
+            setup_properties[:SNS_TOPIC] = topic
+            shared_alarm_options.merge!({
+              :actions_enabled => true,
+              :ok_actions => topic,
+              :alarm_actions => topic,
+              :insufficient_data_actions => topic,
+            })
+          else
+            setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
+          end
+
           [
              # friendly     metric-name      script               unit       minimum
             %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh  Percent    20),
@@ -258,36 +278,17 @@ export PATH=$PATH:$HOME/bin
             # (Seems not to create duplicate alarms, because CloudWatch seems
             # to dedupe them by name, but it does seem to re-send the initial
             # "everything is fine" notification email each time you run it.)
-            alarm_options = %W(
-              --alarm-name #{options[:machine_name]}:\ #{friendly}
-              --alarm-description Alerts\ if\ #{options[:machine_role]}\ machine\ #{options[:machine_name]}\ is\ running\ low\ on\ #{friendly}.
+            alarm_options = shared_alarm_options.merge({
+              :alarm_name => "#{options[:machine_name]}: #{friendly}",
+              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} is running low on #{friendly}.",
 
-              --namespace #{options[:cloudwatch_namespace]}
-              --metric-name #{metric}
-              --dimensions #{setup_properties[:CLOUDWATCH_DIMENSIONS]}
+              :metric_name => metric,
 
-              --statistic Average
-              --comparison-operator LessThanThreshold
-              --threshold #{minimum}
-              --unit #{unit}
+              :threshold => minimum,
+              :unit => unit,
+            })
 
-              --period 60
-              --evaluation-periods 5
-            )
-            if options[:sns_topic]
-              topic = options[:sns_topic]
-              setup_properties[:SNS_TOPIC] = topic
-              alarm_options += %W(
-                --actions-enabled true
-                --ok-actions #{topic}
-                --alarm-actions #{topic}
-                --insufficient-data-actions #{topic}
-              )
-            else
-              setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
-            end
-
-            run! *([:env] + env_vars_for_env + %W(#{setup_properties[:CLOUDWATCH_TOOLS_PATH]}/bin/mon-put-metric-alarm) + alarm_options)
+            setup_cloudwatch_alarm! alarm_options
           end
 
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
