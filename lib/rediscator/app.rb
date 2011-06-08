@@ -258,20 +258,21 @@ export PATH=$PATH:$HOME/bin
             setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
           end
 
-          [
-             # friendly     metric-name      script                unit       minimum
-            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh   Percent    20),
-            %w(Free\ Disk   FreeDiskPercent  free-disk-percent.sh  Percent    20),
-          ].each do |friendly, metric, script, unit, minimum|
-            run! :cp, "#{rediscator_path}/bin/#{script}", :bin
-
+          metrics = [
+            # friendly               metric-name       script                  script-args  unit       check
+            ['Free RAM',             :FreeRAMPercent,  'free-ram-percent.sh',  [],          :Percent,  [:<,  20]],
+            ['Free Disk',            :FreeDiskPercent, 'free-disk-percent.sh', [],          :Percent,  [:<,  20]],
+          ]
+          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" }
+          run! :cp, *(metric_scripts + [:bin])
+          metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
             metric_script << %W(
               mon-put-data
               --metric-name '#{metric}'
               --namespace '#{options[:cloudwatch_namespace]}'
               --dimensions '#{setup_properties[:CLOUDWATCH_DIMENSIONS]}'
               --unit '#{unit}'
-              --value "$(#{script})"
+              --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
             ).join(' ') << "\n"
 
             alarm_options = shared_alarm_options.merge({
@@ -280,7 +281,8 @@ export PATH=$PATH:$HOME/bin
 
               :metric_name => metric,
 
-              :threshold => minimum,
+              :comparison_operator => comparison,
+              :threshold => threshold,
               :unit => unit,
             })
 
