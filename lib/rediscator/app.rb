@@ -262,8 +262,8 @@ export PATH=$PATH:$HOME/bin
             # friendly               metric-name       script                  script-args  unit       check
             ['Free RAM',             :FreeRAMPercent,  'free-ram-percent.sh',  [],          :Percent,  [:<,  20]],
             ['Free Disk',            :FreeDiskPercent, 'free-disk-percent.sh', [],          :Percent,  [:<,  20]],
-            ['Load Average (1min)',  :LoadAvg1Min,     'load-avg.sh',          [1],         :Count,    [:>,   2]],
-            ['Load Average (15min)', :LoadAvg15Min,    'load-avg.sh',          [3],         :Count,    [:>, 0.7]],
+            ['Load Average (1min)',  :LoadAvg1Min,     'load-avg.sh',          [1],         :Count,    nil      ],
+            ['Load Average (15min)', :LoadAvg15Min,    'load-avg.sh',          [3],         :Count,    [:>, 1.0]],
           ]
           metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" }.uniq
           run! :cp, *(metric_scripts + [:bin])
@@ -277,22 +277,24 @@ export PATH=$PATH:$HOME/bin
               --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
             ).join(' ') << "\n"
 
-            symptom = case comparison
-                      when :>, :>=; 'high'
-                      when :<, :<=; 'low'
-                      end
-            alarm_options = shared_alarm_options.merge({
-              :alarm_name => "#{options[:machine_name]}: #{friendly}",
-              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} has #{symptom} #{friendly}.",
+            if comparison
+              symptom = case comparison
+                        when :>, :>=; 'high'
+                        when :<, :<=; 'low'
+                        end
+              alarm_options = shared_alarm_options.merge({
+                :alarm_name => "#{options[:machine_name]}: #{friendly}",
+                :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} has #{symptom} #{friendly}.",
 
-              :metric_name => metric,
+                :metric_name => metric,
 
-              :comparison_operator => comparison,
-              :threshold => threshold,
-              :unit => unit,
-            })
+                :comparison_operator => comparison,
+                :threshold => threshold,
+                :unit => unit,
+              })
 
-            setup_cloudwatch_alarm! alarm_options
+              setup_cloudwatch_alarm! alarm_options
+            end
           end
 
           if options[:ec2]
