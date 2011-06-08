@@ -192,12 +192,32 @@ AWSSecretKey=#{aws_secret_key}
           cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
           create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
 
-          scripts = %w(
-            free-disk-kbytes.sh
-            free-ram-percent.sh
-            log-cloudwatch-metrics.sh
-          ).map {|script| "#{rediscator_path}/bin/#{script}" }
-          run! :cp, *(scripts + [:bin])
+          metric_script = <<-BASH
+#!/bin/bash -e
+machine_name=${1?Please specify machine name as first argument.}
+
+export PATH=$PATH:$HOME/bin
+. aws-cloudwatch-env-vars.sh
+
+          BASH
+
+          [
+             # friendly     metric-name      script               unit
+            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh  Percent  ),
+            %w(Disk\ Space  DiskSpaceKBytes  free-disk-kbytes.sh  Kilobytes),
+          ].each do |friendly, metric, script, unit|
+            run! :cp, "#{rediscator_path}/bin/#{script}", :bin
+
+            metric_script << %W(
+              mon-put-data
+              --metric-name '#{metric}'
+              --namespace '#{machine_name}'
+              --unit '#{unit}'
+              --value "$(#{script})"
+            ).join(' ') << "\n"
+          end
+
+          create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
 
           monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh '#{machine_name}'"
           ensure_crontab_entry! monitor_command, :minute => '*'
