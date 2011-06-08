@@ -277,9 +277,13 @@ export PATH=$PATH:$HOME/bin
               --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
             ).join(' ') << "\n"
 
+            symptom = case comparison
+                      when :>, :>=; 'high'
+                      when :<, :<=; 'low'
+                      end
             alarm_options = shared_alarm_options.merge({
               :alarm_name => "#{options[:machine_name]}: #{friendly}",
-              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} is running low on #{friendly}.",
+              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} has #{symptom} #{friendly}.",
 
               :metric_name => metric,
 
