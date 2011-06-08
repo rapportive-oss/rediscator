@@ -259,12 +259,16 @@ export PATH=$PATH:$HOME/bin
               --evaluation-periods 5
             )
             if options[:sns_topic]
+              topic = options[:sns_topic]
+              setup_properties[:SNS_TOPIC] = topic
               alarm_options += %W(
                 --actions-enabled true
-                --ok-actions #{options[:sns_topic]}
-                --alarm-actions #{options[:sns_topic]}
-                --insufficient-data-actions #{options[:sns_topic]}
+                --ok-actions #{topic}
+                --alarm-actions #{topic}
+                --insufficient-data-actions #{topic}
               )
+            else
+              setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
             end
 
             run! *([:env] + env_vars_for_env + %W(#{setup_properties[:CLOUDWATCH_TOOLS_PATH]}/bin/mon-put-metric-alarm) + alarm_options)
