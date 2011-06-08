@@ -1,3 +1,4 @@
 #!/bin/sh -e
 field=${1:-1}
-awk "{print \$$field}" /proc/loadavg
+cores=$(grep -c '^processor\b' /proc/cpuinfo)
+awk "{print \$$field / $cores}" /proc/loadavg
