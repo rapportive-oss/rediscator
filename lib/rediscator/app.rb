@@ -274,10 +274,6 @@ export PATH=$PATH:$HOME/bin
               --value "$(#{script})"
             ).join(' ') << "\n"
 
-            # TODO alarm idempotence
-            # (Seems not to create duplicate alarms, because CloudWatch seems
-            # to dedupe them by name, but it does seem to re-send the initial
-            # "everything is fine" notification email each time you run it.)
             alarm_options = shared_alarm_options.merge({
               :alarm_name => "#{options[:machine_name]}: #{friendly}",
               :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} is running low on #{friendly}.",
