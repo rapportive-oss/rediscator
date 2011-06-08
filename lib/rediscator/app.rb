@@ -151,6 +151,7 @@ secret_key = #{aws_secret_key}
       unless user_exists?(CLOUDWATCH_USER)
         sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{CLOUDWATCH_USER})
       end
+      setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
 
       as CLOUDWATCH_USER do
         inside "~#{CLOUDWATCH_USER}" do
@@ -170,7 +171,7 @@ secret_key = #{aws_secret_key}
             else; raise 'Multiple versions of CloudWatch tools installed; confused.'
             end
           end
-          cloudwatch_path = "#{home}/opt/#{cloudwatch_dir}"
+          setup_properties[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
 
           aws_credentials_path = "#{home}/.aws-credentials"
           create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
@@ -182,7 +183,7 @@ AWSSecretKey=#{aws_secret_key}
 
           env_vars = [
             [:JAVA_HOME, OPENJDK_JAVA_HOME],
-            [:AWS_CLOUDWATCH_HOME, cloudwatch_path],
+            [:AWS_CLOUDWATCH_HOME, setup_properties[:CLOUDWATCH_TOOLS_PATH]],
             [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
             [:AWS_CREDENTIAL_FILE, aws_credentials_path],
           ]
