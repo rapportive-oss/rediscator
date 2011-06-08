@@ -297,7 +297,7 @@ export PATH=$PATH:$HOME/bin
               :dimensions => "InstanceId=#{metric_dimensions[:InstanceId]}",
 
               :threshold => 90,
-              :comparison_operator => :GreaterThanThreshold,
+              :comparison_operator => :>,
               :unit => :Percent,
             })
           end

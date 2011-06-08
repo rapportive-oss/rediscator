@@ -161,6 +161,14 @@ module Rediscator
       env_vars = options.delete(:env_vars) || []
       env_vars_for_env = env_vars.map {|var, value| "#{var}=#{value}" }
 
+      options[:comparison_operator] = case options[:comparison_operator]
+                                      when :>; :GreaterThanThreshold
+                                      when :>=; :GreaterThanOrEqualToThreshold
+                                      when :<; :LessThanThreshold
+                                      when :<=; :LessThanOrEqualToThreshold
+                                      else options[:comparison_operator]
+                                      end
+
       options = {
         :statistic => :Average,
         :comparison_operator => :LessThanThreshold,
