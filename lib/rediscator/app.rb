@@ -294,7 +294,7 @@ export PATH=$PATH:$HOME/bin
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
 
           monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
-          ensure_crontab_entry! monitor_command, :minute => '*'
+          ensure_crontab_entry! monitor_command, :minute => '*/2'
         end
       end
 
