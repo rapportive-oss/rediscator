@@ -125,6 +125,17 @@ module Rediscator
           end
 
           run! *%w(mkdir -p bin)
+
+          create_file! 'bin/redispw', <<-SH, :permissions => '755'
+#!/bin/sh -e
+grep ^requirepass #{setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
+          SH
+
+          create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
+#!/bin/sh -e
+exec #{setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
+          SH
+
           run! *%W(cp #{rediscator_path}/bin/s3_gzbackup bin)
 
           sudo! :mkdir, '-p', backup_tempdir
