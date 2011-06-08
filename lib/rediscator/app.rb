@@ -14,10 +14,10 @@ module Rediscator
 
     CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
-      /^pidfile .*$/ => 'pidfile [REDIS_DIR]/tmp/redis.pid',
+      /^pidfile .*$/ => 'pidfile [REDIS_PATH]/tmp/redis.pid',
       /^loglevel .*$/ => 'loglevel notice',
-      /^logfile .*$/ => 'logfile [REDIS_DIR]/log/redis.log',
-      /^dir .*$/ => 'dir [REDIS_DIR]',
+      /^logfile .*$/ => 'logfile [REDIS_PATH]/log/redis.log',
+      /^dir .*$/ => 'dir [REDIS_PATH]',
       /^# requirepass .*$/ => 'requirepass [REDIS_PASSWORD]',
     }
 
@@ -36,15 +36,18 @@ module Rediscator
       aws_access_key = options[:aws_access_key]
       aws_secret_key = options[:aws_secret_key]
 
-      redis_dir = "redis-#{redis_version}"
-      redis_path = "~#{REDIS_USER}/opt/#{redis_dir}"
       rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
+
+      setup_properties = {
+        :REDIS_VERSION => redis_version,
+      }
 
       package_install! *REQUIRED_PACKAGES
 
       unless user_exists?(REDIS_USER)
         sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
       end
+      setup_properties[:REDIS_USER] = REDIS_USER
 
       as REDIS_USER do
         inside "~#{REDIS_USER}" do
@@ -61,14 +64,13 @@ module Rediscator
               run! :make, :test if run_tests
             end
 
-            run! :mkdir, '-p', *%w(bin etc log tmp).map {|dir| "#{redis_dir}/#{dir}" }
-            inside redis_dir do
-              pwd = Dir.pwd
-              redis_password = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
-              redis_properties = {
-                :REDIS_DIR => pwd,
-                :REDIS_PASSWORD => redis_password,
-              }
+            run! *%W(mkdir -p redis-#{redis_version})
+
+            inside "redis-#{redis_version}" do
+              run! *%w(mkdir -p bin etc log tmp)
+
+              setup_properties[:REDIS_PATH] = Dir.pwd
+              setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
               if File.exists?('tmp/redis.pid')
                 File.open('tmp/redis.pid') {|pidfile| run! :kill, pidfile.read.strip }
@@ -86,7 +88,7 @@ module Rediscator
 
               File.open('../redis/redis.conf') do |default_conf|
                 File.open('/tmp/redis.conf', 'w') do |new_conf|
-                  substitution_variables = redis_properties.map {|name, value| ["[#{name}]", value] }
+                  substitution_variables = setup_properties.map {|name, value| ["[#{name}]", value] }
 
                   config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
                     [pattern, apply_substitutions(replacement, substitution_variables)]
@@ -104,13 +106,8 @@ module Rediscator
                 end
               end
 
-              run! *%W(#{pwd}/bin/redis-server #{pwd}/etc/redis.conf)
-              run! *%W(bin/redis-cli -a #{redis_password} ping)
-
-              puts "Properties:"
-              redis_properties.each do |property, value|
-                puts "\t#{property}:\t#{value}"
-              end
+              run! *%W(#{setup_properties[:REDIS_PATH]}/bin/redis-server #{setup_properties[:REDIS_PATH]}/etc/redis.conf)
+              run! *%W(bin/redis-cli -a #{setup_properties[:REDIS_PASSWORD]} ping)
             end
           end
 
@@ -136,7 +133,7 @@ secret_key = #{aws_secret_key}
           backup_command = %W(
             ~#{REDIS_USER}/bin/s3_gzbackup
             --temp-dir='#{backup_tempdir}'
-            #{redis_path}/dump.rdb
+            #{setup_properties[:REDIS_PATH]}/dump.rdb
             '#{backup_s3_prefix}'
           ).join(' ')
 
@@ -159,6 +156,11 @@ secret_key = #{aws_secret_key}
             run! :crontab, '-', :stdin => new_crontab
           end
         end
+      end
+
+      puts "Properties:"
+      setup_properties.each do |property, value|
+        puts "\t#{property}:\t#{value}"
       end
     end
   end
