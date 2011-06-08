@@ -259,9 +259,9 @@ export PATH=$PATH:$HOME/bin
           end
 
           [
-             # friendly     metric-name      script               unit       minimum
-            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh  Percent    20),
-            %w(Disk\ Space  DiskSpaceKBytes  free-disk-kbytes.sh  Kilobytes  2097152),
+             # friendly     metric-name      script                unit       minimum
+            %w(Free\ RAM    FreeRAMPercent   free-ram-percent.sh   Percent    20),
+            %w(Free\ Disk   FreeDiskPercent  free-disk-percent.sh  Percent    20),
           ].each do |friendly, metric, script, unit, minimum|
             run! :cp, "#{rediscator_path}/bin/#{script}", :bin
 
