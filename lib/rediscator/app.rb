@@ -136,6 +136,11 @@ grep ^requirepass #{setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f
 exec #{setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
           SH
 
+          setup_properties[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
+            split("\n").
+            map {|line| line.split(':', 2) }.
+            detect {|property, value| property == 'redis_version' }[1]
+
           run! *%W(cp #{rediscator_path}/bin/s3_gzbackup bin)
 
           sudo! :mkdir, '-p', backup_tempdir
