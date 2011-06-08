@@ -39,6 +39,9 @@ module Rediscator
 
     desc 'setup', 'Set up Redis'
     method_option :machine_name, :default => `hostname`, :desc => "Name identifying this Redis machine"
+    method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
+    method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
+    method_option :cloudwatch_namespace, :default => `hostname`, :desc => "Namespace for CloudWatch metrics"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
@@ -46,7 +49,6 @@ module Rediscator
     method_option :aws_access_key, :required => true, :desc => "AWS access key ID for backups and monitoring"
     method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for backups and monitoring"
     def setup
-      machine_name = options[:machine_name]
       redis_version = options[:redis_version]
       run_tests = options[:run_tests]
       backup_tempdir = options[:backup_tempdir]
@@ -195,12 +197,21 @@ AWSSecretKey=#{aws_secret_key}
 
           metric_script = <<-BASH
 #!/bin/bash -e
-machine_name=${1?Please specify machine name as first argument.}
-
 export PATH=$PATH:$HOME/bin
 . aws-cloudwatch-env-vars.sh
 
           BASH
+
+          setup_properties[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
+          metric_dimensions = {
+            :MachineName => options[:machine_name],
+            :MachineRole => options[:machine_role],
+          }
+          if options[:ec2]
+            instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
+            metric_dimensions[:InstanceId] = instance_id
+          end
+          setup_properties[:CLOUDWATCH_DIMENSIONS] = metric_dimensions.map {|k, v| "#{k}=#{v}" }.join(',') 
 
           [
              # friendly     metric-name      script               unit
@@ -212,7 +223,8 @@ export PATH=$PATH:$HOME/bin
             metric_script << %W(
               mon-put-data
               --metric-name '#{metric}'
-              --namespace '#{machine_name}'
+              --namespace '#{options[:cloudwatch_namespace]}'
+              --dimensions '#{setup_properties[:CLOUDWATCH_DIMENSIONS]}'
               --unit '#{unit}'
               --value "$(#{script})"
             ).join(' ') << "\n"
@@ -220,7 +232,7 @@ export PATH=$PATH:$HOME/bin
 
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
 
-          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh '#{machine_name}'"
+          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
           ensure_crontab_entry! monitor_command, :minute => '*'
         end
       end
