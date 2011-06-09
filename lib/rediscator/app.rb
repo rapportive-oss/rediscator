@@ -82,6 +82,8 @@ module Rediscator
 
       as REDIS_USER do
         inside "~#{REDIS_USER}" do
+          create_file! '.forward', 'root'
+
           run! *%w(mkdir -p opt)
           inside 'opt' do
             unless File.exists?('redis')
@@ -183,6 +185,8 @@ secret_key = #{aws_secret_key}
       as CLOUDWATCH_USER do
         inside "~#{CLOUDWATCH_USER}" do
           home = Dir.pwd
+
+          create_file! '.forward', 'root'
 
           run! *%w(mkdir -p opt)
           cloudwatch_dir = nil
