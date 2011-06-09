@@ -198,6 +198,12 @@ AWSAccessKeyId=#{aws_access_key}
 AWSSecretKey=#{aws_secret_key}
           CREDS
 
+          ensure_sudoers_entry! :who => CLOUDWATCH_USER,
+                                :as_who => REDIS_USER,
+                                :nopasswd => true,
+                                :command => "/home/#{REDIS_USER}/bin/authed-redis-cli INFO",
+                                :comment => "Allow #{CLOUDWATCH_USER} to gather Redis metrics, but not do anything else to Redis"
+
           run! *%w(mkdir -p bin)
 
           env_vars = [
@@ -259,15 +265,18 @@ export PATH=$PATH:$HOME/bin
           end
 
           metrics = [
-            # friendly               metric-name               script                  script-args  unit       check
-            ['Free RAM',             :FreeRAMPercent,          'free-ram-percent.sh',  [],          :Percent,  [:<,  20]],
-            ['Free Disk',            :FreeDiskPercent,         'free-disk-percent.sh', [],          :Percent,  [:<,  20]],
-            ['Load Average (1min)',  :LoadAvg1Min,             'load-avg.sh',          [1],         :Count,    nil      ],
-            ['Load Average (15min)', :LoadAvg15Min,            'load-avg.sh',          [3],         :Count,    [:>, 1.0]],
+            # friendly                metric-name               script                  script-args                  unit       check
+            ['Free RAM',              :FreeRAMPercent,          'free-ram-percent.sh',  [],                          :Percent,  [:<,      20]],
+            ['Free Disk',             :FreeDiskPercent,         'free-disk-percent.sh', [],                          :Percent,  [:<,      20]],
+            ['Load Average (1min)',   :LoadAvg1Min,             'load-avg.sh',          [1],                         :Count,    nil          ],
+            ['Load Average (15min)',  :LoadAvg15Min,            'load-avg.sh',          [3],                         :Count,    [:>,     1.0]],
+            ['Redis Blocked Clients', :RedisBlockedClients,     'redis-metric.sh',      %w(blocked_clients),         :Count,    [:>,       5]],
+            ['Redis Used Memory',     :RedisUsedMemory,         'redis-metric.sh',      %w(used_memory),             :Bytes,    nil          ],
+            ['Redis Unsaved Changes', :RedisUnsavedChanges,     'redis-metric.sh',      %w(changes_since_last_save), :Count,    [:>, 300_000]],
           ]
 
           if options[:ec2]
-            metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization', nil,                    [],          :Percent,  [:>,  90]]
+            metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization',  nil,                    [],                  :Percent,  [:>,  90]]
           end
 
           metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" if script }.compact.uniq
