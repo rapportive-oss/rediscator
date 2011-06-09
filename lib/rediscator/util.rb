@@ -151,6 +151,23 @@ module Rediscator
       # stick a newline on the end because cron is picky about such things
     end
 
+    def ensure_sudoers_entry!(opts)
+      assert_valid_keys! opts, :who, :as_who, :nopasswd, :command, :commands, :comment
+      who = opts[:who] or raise "Must specify :who"
+      as_who = opts[:as_who] || :ALL
+      nopasswd = opts[:nopasswd]
+      commands = opts[:command] || opts[:commands] or raise "Must specify :command{,s}"
+      commands = Array(commands)
+      comment = opts[:comment]
+
+      entry = "#{who} ALL = (#{as_who}) #{'NOPASSWD:' if nopasswd} #{commands.join(', ')}"
+
+      if sudo!(*%w(cat /etc/sudoers)).grep(/^#{Regexp.escape entry}$/).empty?
+        entry = (comment ? "# #{comment}\n" : '') + entry + "\n"
+        sudo! :tee, '--append', '/etc/sudoers', :stdin => entry
+      end
+    end
+
     def assert_valid_keys!(opts, *keys)
       invalid_opts = opts.keys - keys
       raise ArgumentError, "unknown options: #{invalid_opts.map(&:inspect).join(' ')}", caller unless invalid_opts.empty?
