@@ -168,6 +168,7 @@ module Rediscator
                                       when :<=; :LessThanOrEqualToThreshold
                                       else options[:comparison_operator]
                                       end
+      options[:dimensions] = cloudwatch_dimensions(options[:dimensions])
 
       options = {
         :statistic => :Average,
@@ -181,6 +182,10 @@ module Rediscator
       end.flatten
 
       run! :env, *(env_vars_for_env + %W(#{cloudwatch_tools_path}/bin/mon-put-metric-alarm) + alarm_options)
+    end
+
+    def cloudwatch_dimensions(dimensions)
+      dimensions.map {|k, v| "#{k}=#{v}" }.join(',') if dimensions
     end
   end
 end

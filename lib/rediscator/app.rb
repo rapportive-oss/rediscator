@@ -228,22 +228,22 @@ export PATH=$PATH:$HOME/bin
           BASH
 
           setup_properties[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
-          metric_dimensions = {
+          custom_metric_dimensions = {
             :MachineName => options[:machine_name],
             :MachineRole => options[:machine_role],
           }
+          builtin_metric_dimensions = {}
           if options[:ec2]
             instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
-            metric_dimensions[:InstanceId] = instance_id
+            custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
           end
-          setup_properties[:CLOUDWATCH_DIMENSIONS] = metric_dimensions.map {|k, v| "#{k}=#{v}" }.join(',')
+          setup_properties[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
 
           shared_alarm_options = {
             :cloudwatch_tools_path => setup_properties[:CLOUDWATCH_TOOLS_PATH],
             :env_vars => setup_time_env_vars,
 
-            :namespace => options[:cloudwatch_namespace],
-            :dimensions => setup_properties[:CLOUDWATCH_DIMENSIONS],
+            :dimensions => custom_metric_dimensions,
           }
           if options[:sns_topic]
             topic = options[:sns_topic]
@@ -259,23 +259,41 @@ export PATH=$PATH:$HOME/bin
           end
 
           metrics = [
-            # friendly               metric-name       script                  script-args  unit       check
-            ['Free RAM',             :FreeRAMPercent,  'free-ram-percent.sh',  [],          :Percent,  [:<,  20]],
-            ['Free Disk',            :FreeDiskPercent, 'free-disk-percent.sh', [],          :Percent,  [:<,  20]],
-            ['Load Average (1min)',  :LoadAvg1Min,     'load-avg.sh',          [1],         :Count,    nil      ],
-            ['Load Average (15min)', :LoadAvg15Min,    'load-avg.sh',          [3],         :Count,    [:>, 1.0]],
+            # friendly               metric-name               script                  script-args  unit       check
+            ['Free RAM',             :FreeRAMPercent,          'free-ram-percent.sh',  [],          :Percent,  [:<,  20]],
+            ['Free Disk',            :FreeDiskPercent,         'free-disk-percent.sh', [],          :Percent,  [:<,  20]],
+            ['Load Average (1min)',  :LoadAvg1Min,             'load-avg.sh',          [1],         :Count,    nil      ],
+            ['Load Average (15min)', :LoadAvg15Min,            'load-avg.sh',          [3],         :Count,    [:>, 1.0]],
           ]
-          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" }.uniq
+
+          if options[:ec2]
+            metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization', nil,                    [],          :Percent,  [:>,  90]]
+          end
+
+          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" if script }.compact.uniq
           run! :cp, *(metric_scripts + [:bin])
           metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
-            metric_script << %W(
-              mon-put-data
-              --metric-name '#{metric}'
-              --namespace '#{options[:cloudwatch_namespace]}'
-              --dimensions '#{setup_properties[:CLOUDWATCH_DIMENSIONS]}'
-              --unit '#{unit}'
-              --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
-            ).join(' ') << "\n"
+            namespace_or_metric, metric_or_nil = metric.to_s.split(':', 2)
+            if metric_or_nil
+              namespace = namespace_or_metric
+              metric = metric_or_nil
+              dimensions = builtin_metric_dimensions
+            else
+              namespace = options[:cloudwatch_namespace]
+              metric = namespace_or_metric
+              dimensions = custom_metric_dimensions
+            end
+
+            if script
+              metric_script << %W(
+                mon-put-data
+                --metric-name '#{metric}'
+                --namespace '#{namespace}'
+                --dimensions '#{cloudwatch_dimensions(dimensions)}'
+                --unit '#{unit}'
+                --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
+              ).join(' ') << "\n"
+            end
 
             if comparison
               symptom = case comparison
@@ -286,7 +304,9 @@ export PATH=$PATH:$HOME/bin
                 :alarm_name => "#{options[:machine_name]}: #{friendly}",
                 :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} has #{symptom} #{friendly}.",
 
+                :namespace => namespace,
                 :metric_name => metric,
+                :dimensions => dimensions,
 
                 :comparison_operator => comparison,
                 :threshold => threshold,
@@ -295,21 +315,6 @@ export PATH=$PATH:$HOME/bin
 
               setup_cloudwatch_alarm! alarm_options
             end
-          end
-
-          if options[:ec2]
-            setup_cloudwatch_alarm! shared_alarm_options.merge({
-              :alarm_name => "#{options[:machine_name]}: CPU Usage",
-              :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} is using a lot of CPU.",
-
-              :namespace => 'AWS/EC2',
-              :metric_name => :CPUUtilization,
-              :dimensions => "InstanceId=#{metric_dimensions[:InstanceId]}",
-
-              :threshold => 90,
-              :comparison_operator => :>,
-              :unit => :Percent,
-            })
           end
 
           create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
