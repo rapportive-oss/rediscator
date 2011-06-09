@@ -120,6 +120,7 @@ module Rediscator
               create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
 
               run! *%W(#{setup_properties[:REDIS_PATH]}/bin/redis-server #{setup_properties[:REDIS_PATH]}/etc/redis.conf)
+              sleep 1
               run! 'bin/redis-cli', '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
             end
           end
