@@ -96,6 +96,14 @@ module Rediscator
     end
 
     def apply_substitutions(string, substitutions)
+      substitutions = substitutions.map do |pattern, value|
+        pattern = case pattern
+                  when Symbol; "[#{pattern}]"
+                  else; pattern
+                  end
+
+        [pattern, value]
+      end
       substitutions.inject(string) do |str, (pattern, replacement)|
         str.gsub(pattern, replacement)
       end

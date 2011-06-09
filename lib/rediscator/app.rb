@@ -28,7 +28,7 @@ module Rediscator
     CLOUDWATCH_TOOLS_ZIP = 'CloudWatch-2010-08-01.zip'
     CLOUDWATCH_TOOLS_URL = "http://ec2-downloads.s3.amazonaws.com/#{CLOUDWATCH_TOOLS_ZIP}"
 
-    CONFIG_SUBSTITUTIONS = {
+    REDIS_CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize yes',
       /^pidfile .*$/ => 'pidfile [REDIS_PATH]/tmp/redis.pid',
       /^loglevel .*$/ => 'loglevel notice',
@@ -108,10 +108,8 @@ module Rediscator
                 run! *%W(cp ../redis/src/redis-#{thing} bin)
               end
 
-              substitution_variables = setup_properties.map {|name, value| ["[#{name}]", value] }
-
-              config_substitutions = CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-                [pattern, apply_substitutions(replacement, substitution_variables)]
+              config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
+                [pattern, apply_substitutions(replacement, setup_properties)]
               end
 
               default_conf = File.read('../redis/redis.conf')
