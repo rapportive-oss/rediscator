@@ -17,6 +17,7 @@ module Rediscator
       s3cmd
       openjdk-6-jre-headless
       unzip
+      postfix
     )
 
     OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
@@ -40,6 +41,7 @@ module Rediscator
     desc 'setup', 'Set up Redis'
     method_option :machine_name, :default => `hostname`, :desc => "Name identifying this Redis machine"
     method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
+    method_option :admin_email, :required => true, :desc => "Email address to receive admin messages"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
     method_option :cloudwatch_namespace, :default => `hostname`, :desc => "Namespace for CloudWatch metrics"
     method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
@@ -50,6 +52,9 @@ module Rediscator
     method_option :aws_access_key, :required => true, :desc => "AWS access key ID for backups and monitoring"
     method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for backups and monitoring"
     def setup
+      unless options[:machine_name] =~ /\w+\.\w+$/
+        raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
+      end
       redis_version = options[:redis_version]
       run_tests = options[:run_tests]
       backup_tempdir = options[:backup_tempdir]
@@ -60,10 +65,14 @@ module Rediscator
       rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
 
       setup_properties = {
+        :MACHINE_NAME => options[:machine_name],
+        :ADMIN_EMAIL => options[:admin_email],
         :REDIS_VERSION => redis_version,
       }
 
       sudo! 'apt-get', :update
+      postfix_debconf = apply_substitutions(File.read("#{rediscator_path}/etc/postfix.debconf"), setup_properties)
+      sudo! 'debconf-set-selections', :stdin => postfix_debconf
       package_install! *REQUIRED_PACKAGES
 
       unless user_exists?(REDIS_USER)
