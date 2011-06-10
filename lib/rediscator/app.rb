@@ -180,6 +180,8 @@ grep ^requirepass #{setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f
 exec #{setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
           SH
 
+          ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
+
           setup_properties[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
             split("\n").
             map {|line| line.split(':', 2) }.
