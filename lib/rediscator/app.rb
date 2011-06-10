@@ -1,3 +1,5 @@
+require 'date'
+
 require 'thor'
 require 'right_aws'
 
@@ -61,6 +63,7 @@ module Rediscator
     method_option :aws_access_key, :required => true, :desc => "AWS access key ID for creating IAM user"
     method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for creating IAM user"
     method_option :aws_iam_group, :required => true, :desc => "AWS IAM group for backup and monitoring"
+    method_option :iam_delete_oldest_key, :type => :boolean, :default => false, :desc => "If the IAM user already exists and already has the maximum allowed number of access keys, whether to delete the oldest key to make room."
     def setup
       unless options[:machine_name] =~ /\w+\.\w+$/
         raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
@@ -88,10 +91,39 @@ module Rediscator
       iam = RightAws::IamInterface.new(options[:aws_access_key], options[:aws_secret_key])
       iam_username = options[:machine_name]
       setup_properties[:IAM_USERNAME] = iam_username
-      # TODO idempotence
-      iam_user = iam.create_user(iam_username)
+      begin
+        iam_user = iam.create_user(iam_username)
+      rescue RightAws::AwsError => e
+        raise unless e.message =~ /EntityAlreadyExists/
+      end
       iam.add_user_to_group(iam_username, options[:aws_iam_group])
-      iam_access_key = iam.create_access_key(:user_name => iam_username)
+      iam_access_key = nil
+      while !iam_access_key
+        begin
+          iam_access_key = iam.create_access_key(:user_name => iam_username)
+        rescue RightAws::AwsError => e
+          raise unless e.message =~ /LimitExceeded.*AccessKeysPerUser/
+          if options[:iam_delete_oldest_key]
+            keys = iam.list_access_keys(:user_name => iam_username)
+            case keys.length
+            when 1; raise "IAM user #{iam_username} only has one access key, don't want to delete it.  Use https://console.aws.amazon.com/iam if you really want to do that."
+            when 0; raise "IAM user #{iam_username} has no access keys; confused.  Try https://console.aws.amazon.com/iam to diagnose."
+            end
+            oldest = keys.sort do |key1, key2|
+              if key1[:status] == 'Inactive'
+                -1
+              elsif key2[:status] == 'Inactive'
+                1
+              else
+                DateTime.parse(key1[:create_date]) <=> DateTime.parse(key2[:create_date])
+              end
+            end.first
+            iam.delete_access_key(oldest[:access_key_id], :user_name => iam_username)
+          else
+            raise "IAM user #{iam_username} already has max access keys! Try --iam-delete-oldest-key option."
+          end
+        end
+      end
       aws_access_key, aws_secret_key = iam_access_key.values_at(:access_key_id, :secret_access_key)
 
       as :root do
