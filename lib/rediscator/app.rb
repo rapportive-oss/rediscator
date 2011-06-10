@@ -39,6 +39,8 @@ module Rediscator
       /^# syslog-ident .*$/ => "syslog-ident redis",
       /^dir .*$/ => 'dir [REDIS_PATH]',
       /^# requirepass .*$/ => 'requirepass [REDIS_PASSWORD]',
+      /^# maxmemory .*$/ => 'maxmemory [REDIS_MAX_MEMORY]',
+      /^# maxmemory-policy .*$/ => 'maxmemory-policy [REDIS_MAX_MEMORY_POLICY]',
     }
 
     desc 'setup', 'Set up Redis'
@@ -50,6 +52,8 @@ module Rediscator
     method_option :cloudwatch_namespace, :default => `hostname`.strip, :desc => "Namespace for CloudWatch metrics"
     method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
+    method_option :redis_max_memory, :required => true, :desc => "Max size of Redis dataset"
+    method_option :redis_max_memory_policy, :required => true, :desc => "What Redis should do when dataset size reaches max"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
     method_option :backup_s3_prefix, :required => true, :desc => "S3 bucket and prefix for daily backups, e.g. s3://backups/redis"
@@ -72,6 +76,8 @@ module Rediscator
         :MACHINE_NAME => options[:machine_name],
         :ADMIN_EMAIL => options[:admin_email],
         :REDIS_VERSION => redis_version,
+        :REDIS_MAX_MEMORY => options[:redis_max_memory],
+        :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       }
 
       sudo! 'apt-get', :update
