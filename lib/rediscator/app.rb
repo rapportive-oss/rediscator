@@ -46,6 +46,7 @@ module Rediscator
     method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :admin_email, :required => true, :desc => "Email address to receive admin messages"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
+    method_option :remote_syslog, :desc => "Remote syslog endpoint to send all logs to"
     method_option :cloudwatch_namespace, :default => `hostname`, :desc => "Namespace for CloudWatch metrics"
     method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
@@ -82,9 +83,14 @@ module Rediscator
         warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
         create_file! '/etc/init/warn-stopped.conf', warn_stopped_upstart
 
+        create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG if options[:remote_syslog]
+*.*                                     @#{options[:remote_syslog]}
+        RSYSLOG
+
         create_file! '/etc/rsyslog.d/99-redis.conf', <<-RSYSLOG
 :programname, isequal, "redis"          #{REDIS_LOG}
         RSYSLOG
+
         run! *%w(restart rsyslog)
         setup_properties[:REDIS_LOG] = REDIS_LOG
 
