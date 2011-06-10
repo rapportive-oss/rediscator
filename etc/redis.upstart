@@ -1,0 +1,6 @@
+# vim:ft=upstart
+
+start on local-filesystems
+stop on runlevel [016]
+respawn
+exec su -c '[REDIS_PATH]/bin/redis-server [REDIS_PATH]/etc/redis.conf' [REDIS_USER]

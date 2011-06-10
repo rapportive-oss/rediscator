@@ -30,7 +30,7 @@ module Rediscator
     CLOUDWATCH_TOOLS_URL = "http://ec2-downloads.s3.amazonaws.com/#{CLOUDWATCH_TOOLS_ZIP}"
 
     REDIS_CONFIG_SUBSTITUTIONS = {
-      /^daemonize .*$/ => 'daemonize yes',
+      /^daemonize .*$/ => 'daemonize no', # since we're using upstart to run it
       /^pidfile .*$/ => 'pidfile [REDIS_PATH]/tmp/redis.pid',
       /^loglevel .*$/ => 'loglevel notice',
       /^logfile .*$/ => 'logfile [REDIS_PATH]/log/redis.log',
@@ -105,14 +105,13 @@ module Rediscator
               setup_properties[:REDIS_PATH] = Dir.pwd
               setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
-              if File.exists?('tmp/redis.pid')
-                File.open('tmp/redis.pid') {|pidfile| run! :kill, pidfile.read.strip }
-                printf 'Waiting for Redis to die...'
-                while File.exists?('tmp/redis.pid')
-                  sleep 1
-                  printf '.'
+              as :root do
+                redis_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis.upstart"), setup_properties)
+                create_file! '/etc/init/redis.conf', redis_upstart
+
+                if run!(*%w(status redis)).strip =~ %r{ start/running\b}
+                  run! *%w(stop redis)
                 end
-                puts
               end
 
               %w(server cli).each do |thing|
@@ -127,12 +126,13 @@ module Rediscator
               substituted_conf = apply_substitutions(default_conf, config_substitutions)
 
               create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
-
-              run! *%W(#{setup_properties[:REDIS_PATH]}/bin/redis-server #{setup_properties[:REDIS_PATH]}/etc/redis.conf)
-              sleep 1
-              run! 'bin/redis-cli', '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
             end
           end
+
+          sudo! *%w(start redis)
+
+          sleep 1
+          run! "#{setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
 
           run! *%w(mkdir -p bin)
 
