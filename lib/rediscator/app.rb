@@ -13,7 +13,6 @@ module Rediscator
     include Util
 
     REQUIRED_PACKAGES = %w(
-      git-core
       build-essential
       pwgen
       s3cmd
@@ -25,7 +24,6 @@ module Rediscator
     OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
 
     REDIS_USER = 'redis'
-    REDIS_REPO = 'https://github.com/antirez/redis.git'
     REDIS_LOG = '/var/log/redis.log'
 
     CLOUDWATCH_USER = 'cloudwatch'
@@ -53,7 +51,7 @@ module Rediscator
     method_option :remote_syslog, :desc => "Remote syslog endpoint to send all logs to"
     method_option :cloudwatch_namespace, :default => `hostname`.strip, :desc => "Namespace for CloudWatch metrics"
     method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
-    method_option :redis_version, :required => true, :desc => "Version of Redis to install"
+    method_option :redis_version, :default => 'stable', :desc => "Version of Redis to install"
     method_option :redis_max_memory, :required => true, :desc => "Max size of Redis dataset"
     method_option :redis_max_memory_policy, :required => true, :desc => "What Redis should do when dataset size reaches max"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
@@ -166,22 +164,24 @@ module Rediscator
 
           run! *%w(mkdir -p opt)
           inside 'opt' do
-            unless File.exists?('redis')
-              run! :git, :clone, REDIS_REPO
-            end
-            inside 'redis' do
-              unless git_branch_exists? redis_version
-                run! :git, :checkout, '-b', redis_version, redis_version
-              end
-              run! :make
+            unless File.exists?("redis-#{redis_version}")
+              redis_tarball_url = if 'stable' == redis_version.downcase
+                                    'http://download.redis.io/redis-stable.tar.gz'
+                                  else
+                                    "http://redis.googlecode.com/files/redis-#{redis_version}.tar.gz"
+                                  end
+              run! :wget, redis_tarball_url
+              run! :tar, 'zxf', "redis-#{redis_version}.tar.gz"
 
-              if run_tests
-                package_install! 'tcl8.5'
-                run! :make, :test
+              inside "redis-#{redis_version}" do
+                run! :make
+
+                if run_tests
+                  package_install! 'tcl8.5'
+                  run! :make, :test
+                end
               end
             end
-
-            run! *%W(mkdir -p redis-#{redis_version})
 
             inside "redis-#{redis_version}" do
               run! *%w(mkdir -p bin etc tmp)
@@ -199,14 +199,14 @@ module Rediscator
               end
 
               %w(server cli).each do |thing|
-                run! *%W(cp ../redis/src/redis-#{thing} bin)
+                run! *%W(cp src/redis-#{thing} bin)
               end
 
               config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
                 [pattern, apply_substitutions(replacement, setup_properties)]
               end
 
-              default_conf = File.read('../redis/redis.conf')
+              default_conf = File.read('redis.conf')
               substituted_conf = apply_substitutions(default_conf, config_substitutions)
 
               create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
