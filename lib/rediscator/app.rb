@@ -24,6 +24,7 @@ module Rediscator
 
     REDIS_USER = 'redis'
     REDIS_REPO = 'https://github.com/antirez/redis.git'
+    REDIS_LOG = '/var/log/redis.log'
 
     CLOUDWATCH_USER = 'cloudwatch'
     CLOUDWATCH_TOOLS_ZIP = 'CloudWatch-2010-08-01.zip'
@@ -33,7 +34,9 @@ module Rediscator
       /^daemonize .*$/ => 'daemonize no', # since we're using upstart to run it
       /^pidfile .*$/ => 'pidfile [REDIS_PATH]/tmp/redis.pid',
       /^loglevel .*$/ => 'loglevel notice',
-      /^logfile .*$/ => 'logfile [REDIS_PATH]/log/redis.log',
+      /^logfile .*$/ => 'logfile stdout',
+      /^# syslog-enabled .*$/ => 'syslog-enabled yes',
+      /^# syslog-ident .*$/ => "syslog-ident redis",
       /^dir .*$/ => 'dir [REDIS_PATH]',
       /^# requirepass .*$/ => 'requirepass [REDIS_PASSWORD]',
     }
@@ -78,6 +81,26 @@ module Rediscator
       as :root do
         warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
         create_file! '/etc/init/warn-stopped.conf', warn_stopped_upstart
+
+        create_file! '/etc/rsyslog.d/99-redis.conf', <<-RSYSLOG
+:programname, isequal, "redis"          #{REDIS_LOG}
+        RSYSLOG
+        run! *%w(restart rsyslog)
+        setup_properties[:REDIS_LOG] = REDIS_LOG
+
+        create_file! '/etc/logrotate.d/redis', <<-LOGROTATE
+#{REDIS_LOG} {
+        weekly
+        missingok
+        rotate 20
+        compress
+        delaycompress
+        notifempty
+        postrotate
+          reload rsyslog >/dev/null 2>&1 || true
+        endscript
+}
+        LOGROTATE
       end
 
       unless user_exists?(REDIS_USER)
@@ -105,7 +128,7 @@ module Rediscator
             run! *%W(mkdir -p redis-#{redis_version})
 
             inside "redis-#{redis_version}" do
-              run! *%w(mkdir -p bin etc log tmp)
+              run! *%w(mkdir -p bin etc tmp)
 
               setup_properties[:REDIS_PATH] = Dir.pwd
               setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
