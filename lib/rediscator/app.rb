@@ -255,7 +255,7 @@ AWSSecretKey=#{aws_secret_key}
           ensure_sudoers_entry! :who => CLOUDWATCH_USER,
                                 :as_who => REDIS_USER,
                                 :nopasswd => true,
-                                :command => "/home/#{REDIS_USER}/bin/authed-redis-cli INFO",
+                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{REDIS_USER}/bin/authed-redis-cli #{command}" },
                                 :comment => "Allow #{CLOUDWATCH_USER} to gather Redis metrics, but not do anything else to Redis"
 
           run! *%w(mkdir -p bin)
@@ -328,6 +328,7 @@ export PATH=$PATH:$HOME/bin
             ['Redis Evicted Keys',    :RedisEvictedKeys,        'redis-metric.sh',      %w(evicted_keys),            :Count,    nil          ],
             ['Redis Used Memory',     :RedisUsedMemory,         'redis-metric.sh',      %w(used_memory),             :Bytes,    nil          ],
             ['Redis Unsaved Changes', :RedisUnsavedChanges,     'redis-metric.sh',      %w(changes_since_last_save), :Count,    [:>, 300_000]],
+            ['Redis % of Max',        :RedisFullness,           'redis-fullness.sh',    [],                          :Percent,  nil          ],
           ]
 
           if options[:ec2]
