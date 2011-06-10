@@ -1,4 +1,5 @@
 require 'thor'
+require 'right_aws'
 
 require File.join(File.dirname(__FILE__), 'util')
 
@@ -57,8 +58,9 @@ module Rediscator
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
     method_option :backup_s3_prefix, :required => true, :desc => "S3 bucket and prefix for daily backups, e.g. s3://backups/redis"
-    method_option :aws_access_key, :required => true, :desc => "AWS access key ID for backups and monitoring"
-    method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for backups and monitoring"
+    method_option :aws_access_key, :required => true, :desc => "AWS access key ID for creating IAM user"
+    method_option :aws_secret_key, :required => true, :desc => "AWS secret access key for creating IAM user"
+    method_option :aws_iam_group, :required => true, :desc => "AWS IAM group for backup and monitoring"
     def setup
       unless options[:machine_name] =~ /\w+\.\w+$/
         raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
@@ -67,8 +69,6 @@ module Rediscator
       run_tests = options[:run_tests]
       backup_tempdir = options[:backup_tempdir]
       backup_s3_prefix = options[:backup_s3_prefix]
-      aws_access_key = options[:aws_access_key]
-      aws_secret_key = options[:aws_secret_key]
 
       rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
 
@@ -84,6 +84,15 @@ module Rediscator
       postfix_debconf = apply_substitutions(File.read("#{rediscator_path}/etc/postfix.debconf"), setup_properties)
       sudo! 'debconf-set-selections', :stdin => postfix_debconf
       package_install! *REQUIRED_PACKAGES
+
+      iam = RightAws::IamInterface.new(options[:aws_access_key], options[:aws_secret_key])
+      iam_username = options[:machine_name]
+      setup_properties[:IAM_USERNAME] = iam_username
+      # TODO idempotence
+      iam_user = iam.create_user(iam_username)
+      iam.add_user_to_group(iam_username, options[:aws_iam_group])
+      iam_access_key = iam.create_access_key(:user_name => iam_username)
+      aws_access_key, aws_secret_key = iam_access_key.values_at(:access_key_id, :secret_access_key)
 
       as :root do
         warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
