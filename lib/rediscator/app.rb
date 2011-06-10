@@ -15,7 +15,6 @@ module Rediscator
     REQUIRED_PACKAGES = %w(
       git-core
       build-essential
-      tcl8.5
       pwgen
       s3cmd
       openjdk-6-jre-headless
@@ -175,7 +174,11 @@ module Rediscator
                 run! :git, :checkout, '-b', redis_version, redis_version
               end
               run! :make
-              run! :make, :test if run_tests
+
+              if run_tests
+                package_install! 'tcl8.5'
+                run! :make, :test
+              end
             end
 
             run! *%W(mkdir -p redis-#{redis_version})
