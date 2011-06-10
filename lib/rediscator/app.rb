@@ -75,6 +75,11 @@ module Rediscator
       sudo! 'debconf-set-selections', :stdin => postfix_debconf
       package_install! *REQUIRED_PACKAGES
 
+      as :root do
+        warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
+        create_file! '/etc/init/warn-stopped.conf', warn_stopped_upstart
+      end
+
       unless user_exists?(REDIS_USER)
         sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
       end

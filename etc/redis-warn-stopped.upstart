@@ -1,0 +1,9 @@
+# vim:ft=upstart
+
+start on stopped redis RESULT=failed
+script
+  [ "$EXIT_STATUS" ] && symptom="with status $EXIT_STATUS"
+  [ "$EXIT_SIGNAL" ] && symptom="due to signal $EXIT_SIGNAL"
+  [ "$symptom" ] || symptom="for reasons unknown..."
+  echo "$JOB failed ($PROCESS) $symptom" | mail -s "[MACHINE_NAME]: $JOB failed" root
+end script
