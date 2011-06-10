@@ -342,13 +342,14 @@ export PATH=$PATH:$HOME/bin
             end
 
             if script
+              metric_script << "#{metric}=$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})\n"
               metric_script << %W(
                 mon-put-data
                 --metric-name '#{metric}'
                 --namespace '#{namespace}'
                 --dimensions '#{cloudwatch_dimensions(dimensions)}'
                 --unit '#{unit}'
-                --value "$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})"
+                --value "$#{metric}"
               ).join(' ') << "\n"
             end
 
