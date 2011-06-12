@@ -119,8 +119,7 @@ module Rediscator
       aws_access_key, aws_secret_key = iam_access_key.values_at(:access_key_id, :secret_access_key)
 
       as :root do
-        warn_stopped_upstart = apply_substitutions(File.read("#{@rediscator_path}/etc/redis-warn-stopped.upstart"), @setup_properties)
-        create_file! '/etc/init/redis-warn-stopped.conf', warn_stopped_upstart
+        create_file! '/etc/init/redis-warn-stopped.conf', from_template('etc/redis-warn-stopped.upstart')
 
         create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG if options[:remote_syslog]
 *.*                                     @#{options[:remote_syslog]}
@@ -191,8 +190,7 @@ module Rediscator
               @setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
               as :root do
-                redis_upstart = apply_substitutions(File.read("#{@rediscator_path}/etc/redis.upstart"), @setup_properties)
-                create_file! '/etc/init/redis.conf', redis_upstart
+                create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
 
                 if run!(*%w(status redis)).strip =~ %r{ start/running\b}
                   run! *%w(stop redis)
@@ -238,7 +236,7 @@ exec #{@setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw
             map {|line| line.split(':', 2) }.
             detect {|property, value| property == 'redis_version' }[1]
 
-          run! *%W(cp #{@rediscator_path}/bin/s3_gzbackup bin)
+          run! *%W(cp #{supplied 'bin/s3_gzbackup'} bin)
 
           sudo! :mkdir, '-p', backup_tempdir
           sudo! :chmod, 'a+rwxt', backup_tempdir
@@ -380,7 +378,7 @@ export PATH=$PATH:$HOME/bin
             metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization',  nil,                    [],                  :Percent,  [:>,  90]]
           end
 
-          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{@rediscator_path}/bin/#{script}" if script }.compact.uniq
+          metric_scripts = metrics.map {|_, _, script, _, _, _| supplied("bin/#{script}") if script }.compact.uniq
           run! :cp, *(metric_scripts + [:bin])
           metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
             namespace_or_metric, metric_or_nil = metric.to_s.split(':', 2)
@@ -452,13 +450,22 @@ export PATH=$PATH:$HOME/bin
 
       sudo! 'apt-get', :update
 
-      postfix_debconf = apply_substitutions(File.read("#{@rediscator_path}/etc/postfix.debconf"), @setup_properties)
-      sudo! 'debconf-set-selections', :stdin => postfix_debconf
+      sudo! 'debconf-set-selections', :stdin => from_template('etc/postfix.debconf')
 
       packages = REQUIRED_PACKAGES
       packages << 'tcl8.5' if opts[:redis_run_tests]
 
       package_install! *packages
+    end
+
+
+    def supplied(*args)
+      File.join(@rediscator_path, *args)
+    end
+
+    def from_template(template_name)
+      template = File.read(supplied(template_name))
+      apply_substitutions(template, @setup_properties)
     end
   end
 end
