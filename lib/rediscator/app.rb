@@ -65,7 +65,7 @@ module Rediscator
     method_option :redis_version, :default => 'stable', :desc => "Version of Redis to install"
     method_option :redis_max_memory, :required => true, :desc => "Max size of Redis dataset"
     method_option :redis_max_memory_policy, :required => true, :desc => "What Redis should do when dataset size reaches max"
-    method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
+    method_option :redis_run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
     method_option :backup_tempdir, :default => '/tmp', :desc => "Temporary directory for daily backups"
     method_option :backup_s3_prefix, :required => true, :desc => "S3 bucket and prefix for daily backups, e.g. s3://backups/redis"
     method_option :aws_access_key, :required => true, :desc => "AWS access key ID for creating IAM user"
@@ -73,19 +73,12 @@ module Rediscator
     method_option :aws_iam_group, :required => true, :desc => "AWS IAM group for backup and monitoring"
     method_option :iam_delete_oldest_key, :type => :boolean, :default => false, :desc => "If the IAM user already exists and already has the maximum allowed number of access keys, whether to delete the oldest key to make room."
     def setup
-      unless options[:machine_name] =~ /\w+\.\w+$/
-        raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
-      end
       redis_version = options[:redis_version]
-      run_tests = options[:run_tests]
+      run_tests = options[:redis_run_tests]
       backup_tempdir = options[:backup_tempdir]
       backup_s3_prefix = options[:backup_s3_prefix]
 
-      sudo! 'apt-get', :update
-      @setup_properties[:ADMIN_EMAIL] = options[:admin_email]
-      postfix_debconf = apply_substitutions(File.read("#{@rediscator_path}/etc/postfix.debconf"), @setup_properties)
-      sudo! 'debconf-set-selections', :stdin => postfix_debconf
-      package_install! *REQUIRED_PACKAGES
+      install_prereqs :admin_email => options[:admin_email], :redis_run_tests => run_tests
 
       iam = RightAws::IamInterface.new(options[:aws_access_key], options[:aws_secret_key])
       iam_username = options[:machine_name]
@@ -446,6 +439,26 @@ export PATH=$PATH:$HOME/bin
       @setup_properties.each do |property, value|
         puts "\t#{property}:\t#{value}"
       end
+    end
+
+
+    private
+    def install_prereqs(opts)
+      unless @setup_properties[:MACHINE_NAME] =~ /\w+\.\w+$/
+        raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
+      end
+
+      @setup_properties[:ADMIN_EMAIL] = opts[:admin_email] or raise ArgumentError, 'must specify :admin_email'
+
+      sudo! 'apt-get', :update
+
+      postfix_debconf = apply_substitutions(File.read("#{@rediscator_path}/etc/postfix.debconf"), @setup_properties)
+      sudo! 'debconf-set-selections', :stdin => postfix_debconf
+
+      packages = REQUIRED_PACKAGES
+      packages << 'tcl8.5' if opts[:redis_run_tests]
+
+      package_install! *packages
     end
   end
 end
