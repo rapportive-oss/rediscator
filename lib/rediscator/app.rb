@@ -75,9 +75,6 @@ module Rediscator
       setup_properties = {
         :MACHINE_NAME => options[:machine_name],
         :ADMIN_EMAIL => options[:admin_email],
-        :REDIS_VERSION => redis_version,
-        :REDIS_MAX_MEMORY => options[:redis_max_memory],
-        :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       }
 
       sudo! 'apt-get', :update
@@ -157,6 +154,12 @@ module Rediscator
         sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
       end
       setup_properties[:REDIS_USER] = REDIS_USER
+
+      setup_properties.merge!({
+        :REDIS_VERSION => redis_version,
+        :REDIS_MAX_MEMORY => options[:redis_max_memory],
+        :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
+      })
 
       as REDIS_USER do
         inside "~#{REDIS_USER}" do
