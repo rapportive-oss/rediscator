@@ -87,34 +87,11 @@ module Rediscator
         :secret_key => options[:aws_secret_key]
       @setup_properties[:IAM_USERNAME], aws_access_key, aws_secret_key = iam_access_key.values_at(:user_name, :access_key_id, :secret_access_key)
 
-      as :root do
-        create_file! '/etc/init/redis-warn-stopped.conf', from_template('etc/redis-warn-stopped.upstart')
+      install_crash_warning
 
-        create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG if options[:remote_syslog]
-*.*                                     @#{options[:remote_syslog]}
-        RSYSLOG
-
-        create_file! '/etc/rsyslog.d/99-redis.conf', <<-RSYSLOG
-:programname, isequal, "redis"          #{REDIS_LOG}
-        RSYSLOG
-
-        run! *%w(restart rsyslog)
-        @setup_properties[:REDIS_LOG] = REDIS_LOG
-
-        create_file! '/etc/logrotate.d/redis', <<-LOGROTATE
-#{REDIS_LOG} {
-        weekly
-        missingok
-        rotate 20
-        compress
-        delaycompress
-        notifempty
-        postrotate
-          reload rsyslog >/dev/null 2>&1 || true
-        endscript
-}
-        LOGROTATE
-      end
+      setup_remote_syslog(options[:remote_syslog]) if options[:remote_syslog]
+      setup_redis_log
+      sudo! *%w(restart rsyslog)
 
       unless user_exists?(REDIS_USER)
         sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
@@ -477,6 +454,50 @@ export PATH=$PATH:$HOME/bin
       end
 
       iam_access_key
+    end
+
+
+    # Set up an Upstart rule to email the admin if Redis crashes and cannot be restarted.
+    def install_crash_warning
+      as :root do
+        create_file! '/etc/init/redis-warn-stopped.conf', from_template('etc/redis-warn-stopped.upstart')
+      end
+    end
+
+
+    # Configure syslog to send logs to a remote syslog server
+    def setup_remote_syslog(endpoint)
+      as :root do
+        create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG
+*.*                                     @#{endpoint}
+        RSYSLOG
+      end
+    end
+
+
+    # Set up Redis logs to go to REDIS_LOG with log rotation
+    def setup_redis_log
+      as :root do
+        create_file! '/etc/rsyslog.d/99-redis.conf', <<-RSYSLOG
+:programname, isequal, "redis"          #{REDIS_LOG}
+        RSYSLOG
+
+        create_file! '/etc/logrotate.d/redis', <<-LOGROTATE
+#{REDIS_LOG} {
+        weekly
+        missingok
+        rotate 20
+        compress
+        delaycompress
+        notifempty
+        postrotate
+          reload rsyslog >/dev/null 2>&1 || true
+        endscript
+}
+        LOGROTATE
+      end
+
+      @setup_properties[:REDIS_LOG] = REDIS_LOG
     end
 
 
