@@ -81,7 +81,7 @@ module Rediscator
 
       as :root do
         warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
-        create_file! '/etc/init/warn-stopped.conf', warn_stopped_upstart
+        create_file! '/etc/init/redis-warn-stopped.conf', warn_stopped_upstart
 
         create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG if options[:remote_syslog]
 *.*                                     @#{options[:remote_syslog]}
