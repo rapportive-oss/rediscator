@@ -42,12 +42,12 @@ module Rediscator
     }
 
     desc 'setup', 'Set up Redis'
-    method_option :machine_name, :default => `hostname`, :desc => "Name identifying this Redis machine"
+    method_option :machine_name, :default => `hostname`.strip, :desc => "Name identifying this Redis machine"
     method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :admin_email, :required => true, :desc => "Email address to receive admin messages"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
     method_option :remote_syslog, :desc => "Remote syslog endpoint to send all logs to"
-    method_option :cloudwatch_namespace, :default => `hostname`, :desc => "Namespace for CloudWatch metrics"
+    method_option :cloudwatch_namespace, :default => `hostname`.strip, :desc => "Namespace for CloudWatch metrics"
     method_option :sns_topic, :desc => "Simple Notification Service topic ARN for alarm notifications"
     method_option :redis_version, :required => true, :desc => "Version of Redis to install"
     method_option :run_tests, :default => false, :type => :boolean, :desc => "Whether to run the Redis test suite"
