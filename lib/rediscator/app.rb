@@ -12,6 +12,8 @@ module Rediscator
     include Thor::Actions
     include Util
 
+    class_option :machine_name, :default => `hostname`.strip, :desc => "Name identifying this Redis machine"
+
     REQUIRED_PACKAGES = %w(
       build-essential
       pwgen
@@ -43,10 +45,19 @@ module Rediscator
       /^# maxmemory-policy .*$/ => 'maxmemory-policy [REDIS_MAX_MEMORY_POLICY]',
     }
 
+
+    def initialize(*args)
+      super
+      @setup_properties = {
+        :MACHINE_NAME => options[:machine_name],
+      }
+      @rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
+    end
+
+
     desc 'setup', 'Set up Redis'
-    method_option :machine_name, :default => `hostname`.strip, :desc => "Name identifying this Redis machine"
-    method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :admin_email, :required => true, :desc => "Email address to receive admin messages"
+    method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
     method_option :remote_syslog, :desc => "Remote syslog endpoint to send all logs to"
     method_option :cloudwatch_namespace, :default => `hostname`.strip, :desc => "Namespace for CloudWatch metrics"
@@ -70,21 +81,15 @@ module Rediscator
       backup_tempdir = options[:backup_tempdir]
       backup_s3_prefix = options[:backup_s3_prefix]
 
-      rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
-
-      setup_properties = {
-        :MACHINE_NAME => options[:machine_name],
-        :ADMIN_EMAIL => options[:admin_email],
-      }
-
       sudo! 'apt-get', :update
-      postfix_debconf = apply_substitutions(File.read("#{rediscator_path}/etc/postfix.debconf"), setup_properties)
+      @setup_properties[:ADMIN_EMAIL] = options[:admin_email]
+      postfix_debconf = apply_substitutions(File.read("#{@rediscator_path}/etc/postfix.debconf"), @setup_properties)
       sudo! 'debconf-set-selections', :stdin => postfix_debconf
       package_install! *REQUIRED_PACKAGES
 
       iam = RightAws::IamInterface.new(options[:aws_access_key], options[:aws_secret_key])
       iam_username = options[:machine_name]
-      setup_properties[:IAM_USERNAME] = iam_username
+      @setup_properties[:IAM_USERNAME] = iam_username
       begin
         iam_user = iam.create_user(iam_username)
       rescue RightAws::AwsError => e
@@ -121,7 +126,7 @@ module Rediscator
       aws_access_key, aws_secret_key = iam_access_key.values_at(:access_key_id, :secret_access_key)
 
       as :root do
-        warn_stopped_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis-warn-stopped.upstart"), setup_properties)
+        warn_stopped_upstart = apply_substitutions(File.read("#{@rediscator_path}/etc/redis-warn-stopped.upstart"), @setup_properties)
         create_file! '/etc/init/redis-warn-stopped.conf', warn_stopped_upstart
 
         create_file! '/etc/rsyslog.d/60-remote-syslog.conf', <<-RSYSLOG if options[:remote_syslog]
@@ -133,7 +138,7 @@ module Rediscator
         RSYSLOG
 
         run! *%w(restart rsyslog)
-        setup_properties[:REDIS_LOG] = REDIS_LOG
+        @setup_properties[:REDIS_LOG] = REDIS_LOG
 
         create_file! '/etc/logrotate.d/redis', <<-LOGROTATE
 #{REDIS_LOG} {
@@ -153,9 +158,9 @@ module Rediscator
       unless user_exists?(REDIS_USER)
         sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
       end
-      setup_properties[:REDIS_USER] = REDIS_USER
+      @setup_properties[:REDIS_USER] = REDIS_USER
 
-      setup_properties.merge!({
+      @setup_properties.merge!({
         :REDIS_VERSION => redis_version,
         :REDIS_MAX_MEMORY => options[:redis_max_memory],
         :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
@@ -189,11 +194,11 @@ module Rediscator
             inside "redis-#{redis_version}" do
               run! *%w(mkdir -p bin etc tmp)
 
-              setup_properties[:REDIS_PATH] = Dir.pwd
-              setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
+              @setup_properties[:REDIS_PATH] = Dir.pwd
+              @setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
               as :root do
-                redis_upstart = apply_substitutions(File.read("#{rediscator_path}/etc/redis.upstart"), setup_properties)
+                redis_upstart = apply_substitutions(File.read("#{@rediscator_path}/etc/redis.upstart"), @setup_properties)
                 create_file! '/etc/init/redis.conf', redis_upstart
 
                 if run!(*%w(status redis)).strip =~ %r{ start/running\b}
@@ -206,7 +211,7 @@ module Rediscator
               end
 
               config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-                [pattern, apply_substitutions(replacement, setup_properties)]
+                [pattern, apply_substitutions(replacement, @setup_properties)]
               end
 
               default_conf = File.read('redis.conf')
@@ -219,28 +224,28 @@ module Rediscator
           sudo! *%w(start redis)
 
           sleep 1
-          run! "#{setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', setup_properties[:REDIS_PASSWORD], :ping, :echo => false
+          run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :ping, :echo => false
 
           run! *%w(mkdir -p bin)
 
           create_file! 'bin/redispw', <<-SH, :permissions => '755'
 #!/bin/sh -e
-grep ^requirepass #{setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
+grep ^requirepass #{@setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
           SH
 
           create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
 #!/bin/sh -e
-exec #{setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
+exec #{@setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
           SH
 
           ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
 
-          setup_properties[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
+          @setup_properties[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
             split("\n").
             map {|line| line.split(':', 2) }.
             detect {|property, value| property == 'redis_version' }[1]
 
-          run! *%W(cp #{rediscator_path}/bin/s3_gzbackup bin)
+          run! *%W(cp #{@rediscator_path}/bin/s3_gzbackup bin)
 
           sudo! :mkdir, '-p', backup_tempdir
           sudo! :chmod, 'a+rwxt', backup_tempdir
@@ -254,12 +259,12 @@ secret_key = #{aws_secret_key}
           backup_command = %W(
             ~#{REDIS_USER}/bin/s3_gzbackup
             --temp-dir='#{backup_tempdir}'
-            #{setup_properties[:REDIS_PATH]}/dump.rdb
+            #{@setup_properties[:REDIS_PATH]}/dump.rdb
             '#{backup_s3_prefix}'
           ).join(' ')
 
           # make sure dump.rdb exists so the backup job doesn't fail
-          run! "#{setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', setup_properties[:REDIS_PASSWORD], :save, :echo => false
+          run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :save, :echo => false
 
           ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
         end
@@ -269,7 +274,7 @@ secret_key = #{aws_secret_key}
       unless user_exists?(CLOUDWATCH_USER)
         sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{CLOUDWATCH_USER})
       end
-      setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
+      @setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
 
       as CLOUDWATCH_USER do
         inside "~#{CLOUDWATCH_USER}" do
@@ -291,7 +296,7 @@ secret_key = #{aws_secret_key}
             else; raise 'Multiple versions of CloudWatch tools installed; confused.'
             end
           end
-          setup_properties[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
+          @setup_properties[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
 
           aws_credentials_path = "#{home}/.aws-credentials"
           create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
@@ -309,7 +314,7 @@ AWSSecretKey=#{aws_secret_key}
 
           env_vars = [
             [:JAVA_HOME, OPENJDK_JAVA_HOME],
-            [:AWS_CLOUDWATCH_HOME, setup_properties[:CLOUDWATCH_TOOLS_PATH]],
+            [:AWS_CLOUDWATCH_HOME, @setup_properties[:CLOUDWATCH_TOOLS_PATH]],
             [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
             [:AWS_CREDENTIAL_FILE, aws_credentials_path],
           ]
@@ -320,7 +325,7 @@ AWSSecretKey=#{aws_secret_key}
             # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
             expanded = value.
               gsub('$PATH', ENV['PATH']).
-              gsub('$AWS_CLOUDWATCH_HOME', setup_properties[:CLOUDWATCH_TOOLS_PATH])
+              gsub('$AWS_CLOUDWATCH_HOME', @setup_properties[:CLOUDWATCH_TOOLS_PATH])
             [var, expanded]
           end
 
@@ -334,7 +339,7 @@ export PATH=$PATH:$HOME/bin
 
           BASH
 
-          setup_properties[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
+          @setup_properties[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
           custom_metric_dimensions = {
             :MachineName => options[:machine_name],
             :MachineRole => options[:machine_role],
@@ -344,17 +349,17 @@ export PATH=$PATH:$HOME/bin
             instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
             custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
           end
-          setup_properties[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
+          @setup_properties[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
 
           shared_alarm_options = {
-            :cloudwatch_tools_path => setup_properties[:CLOUDWATCH_TOOLS_PATH],
+            :cloudwatch_tools_path => @setup_properties[:CLOUDWATCH_TOOLS_PATH],
             :env_vars => setup_time_env_vars,
 
             :dimensions => custom_metric_dimensions,
           }
           if options[:sns_topic]
             topic = options[:sns_topic]
-            setup_properties[:SNS_TOPIC] = topic
+            @setup_properties[:SNS_TOPIC] = topic
             shared_alarm_options.merge!({
               :actions_enabled => true,
               :ok_actions => topic,
@@ -362,7 +367,7 @@ export PATH=$PATH:$HOME/bin
               :insufficient_data_actions => topic,
             })
           else
-            setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
+            @setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
           end
 
           metrics = [
@@ -382,7 +387,7 @@ export PATH=$PATH:$HOME/bin
             metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization',  nil,                    [],                  :Percent,  [:>,  90]]
           end
 
-          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{rediscator_path}/bin/#{script}" if script }.compact.uniq
+          metric_scripts = metrics.map {|_, _, script, _, _, _| "#{@rediscator_path}/bin/#{script}" if script }.compact.uniq
           run! :cp, *(metric_scripts + [:bin])
           metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
             namespace_or_metric, metric_or_nil = metric.to_s.split(':', 2)
@@ -438,7 +443,7 @@ export PATH=$PATH:$HOME/bin
       end
 
       puts "Properties:"
-      setup_properties.each do |property, value|
+      @setup_properties.each do |property, value|
         puts "\t#{property}:\t#{value}"
       end
     end
