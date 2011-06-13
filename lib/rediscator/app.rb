@@ -13,6 +13,7 @@ module Rediscator
     include Util
 
     class_option :machine_name, :default => `hostname`.strip, :desc => "Name identifying this Redis machine"
+    class_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
 
     REQUIRED_PACKAGES = %w(
       build-essential
@@ -50,6 +51,7 @@ module Rediscator
       super
       @setup_properties = {
         :MACHINE_NAME => options[:machine_name],
+        :MACHINE_ROLE => options[:machine_role],
       }
       @rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
     end
@@ -57,7 +59,6 @@ module Rediscator
 
     desc 'setup', 'Set up Redis'
     method_option :admin_email, :required => true, :desc => "Email address to receive admin messages"
-    method_option :machine_role, :default => 'redis', :desc => "Description of this machine's role"
     method_option :ec2, :default => false, :type => :boolean, :desc => "Whether this instance is on EC2"
     method_option :remote_syslog, :desc => "Remote syslog endpoint to send all logs to"
     method_option :cloudwatch_namespace, :default => `hostname`.strip, :desc => "Namespace for CloudWatch metrics"
@@ -73,9 +74,6 @@ module Rediscator
     method_option :aws_iam_group, :desc => "AWS IAM group for backup and monitoring"
     method_option :iam_delete_oldest_key, :type => :boolean, :default => false, :desc => "If the IAM user already exists and already has the maximum allowed number of access keys, whether to delete the oldest key to make room."
     def setup
-      backup_tempdir = options[:backup_tempdir]
-      backup_s3_prefix = options[:backup_s3_prefix]
-
       install_prereqs :admin_email => options[:admin_email], :redis_run_tests => options[:redis_run_tests]
 
       iam_access_key = generate_access_key :username => options[:machine_name],
@@ -115,201 +113,20 @@ module Rediscator
 
       as props[:REDIS_USER] do
         ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
-
-        inside "~#{props[:REDIS_USER]}" do
-          run! *%W(cp #{supplied 'bin/s3_gzbackup'} bin)
-
-          sudo! :mkdir, '-p', backup_tempdir
-          sudo! :chmod, 'a+rwxt', backup_tempdir
-
-          create_file! '.s3cfg', <<-S3CFG, :permissions => '600'
-[default]
-access_key = #{aws_access_key}
-secret_key = #{aws_secret_key}
-          S3CFG
-
-          backup_command = %W(
-            ~#{props[:REDIS_USER]}/bin/s3_gzbackup
-            --temp-dir='#{backup_tempdir}'
-            #{props[:REDIS_PATH]}/dump.rdb
-            '#{backup_s3_prefix}'
-          ).join(' ')
-
-          # make sure dump.rdb exists so the backup job doesn't fail
-          run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :save, :echo => false
-
-          ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
-        end
       end
+
+      setup_redis_backups :s3_prefix => options[:backup_s3_prefix],
+        :s3_access_key_id => aws_access_key,
+        :s3_secret_key => aws_secret_key,
+        :tmp => options[:backup_tempdir]
 
 
       props[:CLOUDWATCH_USER] = CLOUDWATCH_USER
-      create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
+      setup_monitors_and_alarms :cloudwatch_namespace => options[:cloudwatch_namespace],
+        :cloudwatch_access_key_id => aws_access_key,
+        :cloudwatch_secret_key => aws_secret_key,
+        :sns_topic => options[:sns_topic]
 
-
-      as props[:CLOUDWATCH_USER] do
-        inside "~#{props[:CLOUDWATCH_USER]}" do
-          home = Dir.pwd
-
-          run! *%w(mkdir -p opt)
-          cloudwatch_dir = nil
-          inside 'opt' do
-            if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
-              run! :wget, '-q', CLOUDWATCH_TOOLS_URL unless File.exists? CLOUDWATCH_TOOLS_ZIP
-              run! :unzip, CLOUDWATCH_TOOLS_ZIP
-            end
-            cloudwatch_dirs = Dir.glob('CloudWatch-*').select {|dir| File.directory? dir }
-            case cloudwatch_dirs.size
-            when 1; cloudwatch_dir = cloudwatch_dirs[0]
-            when 0; raise 'Failed to install CloudWatch tools!'
-            else; raise 'Multiple versions of CloudWatch tools installed; confused.'
-            end
-          end
-          props[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
-
-          aws_credentials_path = "#{home}/.aws-credentials"
-          create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
-AWSAccessKeyId=#{aws_access_key}
-AWSSecretKey=#{aws_secret_key}
-          CREDS
-
-          ensure_sudoers_entry! :who => props[:CLOUDWATCH_USER],
-                                :as_who => props[:REDIS_USER],
-                                :nopasswd => true,
-                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
-                                :comment => "Allow #{props[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
-
-          run! *%w(mkdir -p bin)
-
-          env_vars = [
-            [:JAVA_HOME, OPENJDK_JAVA_HOME],
-            [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
-            [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
-            [:AWS_CREDENTIAL_FILE, aws_credentials_path],
-          ]
-          env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
-            "#{var}=#{value}; export #{var}"
-          end).join("\n")
-          setup_time_env_vars = env_vars.map do |var, value|
-            # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
-            expanded = value.
-              gsub('$PATH', ENV['PATH']).
-              gsub('$AWS_CLOUDWATCH_HOME', props[:CLOUDWATCH_TOOLS_PATH])
-            [var, expanded]
-          end
-
-          cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
-          create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
-
-          metric_script = <<-BASH
-#!/bin/bash -e
-export PATH=$PATH:$HOME/bin
-. aws-cloudwatch-env-vars.sh
-
-          BASH
-
-          props[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
-          custom_metric_dimensions = {
-            :MachineName => options[:machine_name],
-            :MachineRole => options[:machine_role],
-          }
-          builtin_metric_dimensions = {}
-          if options[:ec2]
-            instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
-            custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
-          end
-          props[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
-
-          shared_alarm_options = {
-            :cloudwatch_tools_path => props[:CLOUDWATCH_TOOLS_PATH],
-            :env_vars => setup_time_env_vars,
-
-            :dimensions => custom_metric_dimensions,
-          }
-          if options[:sns_topic]
-            topic = options[:sns_topic]
-            props[:SNS_TOPIC] = topic
-            shared_alarm_options.merge!({
-              :actions_enabled => true,
-              :ok_actions => topic,
-              :alarm_actions => topic,
-              :insufficient_data_actions => topic,
-            })
-          else
-            props[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
-          end
-
-          metrics = [
-            # friendly                metric-name               script                  script-args                  unit       check
-            ['Free RAM',              :FreeRAMPercent,          'free-ram-percent.sh',  [],                          :Percent,  [:<,      20]],
-            ['Free Disk',             :FreeDiskPercent,         'free-disk-percent.sh', [],                          :Percent,  [:<,      20]],
-            ['Load Average (1min)',   :LoadAvg1Min,             'load-avg.sh',          [1],                         :Count,    nil          ],
-            ['Load Average (15min)',  :LoadAvg15Min,            'load-avg.sh',          [3],                         :Count,    [:>,     1.0]],
-            ['Redis Blocked Clients', :RedisBlockedClients,     'redis-metric.sh',      %w(blocked_clients),         :Count,    [:>,       5]],
-            ['Redis Evicted Keys',    :RedisEvictedKeys,        'redis-metric.sh',      %w(evicted_keys),            :Count,    nil          ],
-            ['Redis Used Memory',     :RedisUsedMemory,         'redis-metric.sh',      %w(used_memory),             :Bytes,    nil          ],
-            ['Redis Unsaved Changes', :RedisUnsavedChanges,     'redis-metric.sh',      %w(changes_since_last_save), :Count,    [:>, 300_000]],
-            ['Redis % of Max',        :RedisFullness,           'redis-fullness.sh',    [],                          :Percent,  nil          ],
-          ]
-
-          if options[:ec2]
-            metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization',  nil,                    [],                  :Percent,  [:>,  90]]
-          end
-
-          metric_scripts = metrics.map {|_, _, script, _, _, _| supplied("bin/#{script}") if script }.compact.uniq
-          run! :cp, *(metric_scripts + [:bin])
-          metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
-            namespace_or_metric, metric_or_nil = metric.to_s.split(':', 2)
-            if metric_or_nil
-              namespace = namespace_or_metric
-              metric = metric_or_nil
-              dimensions = builtin_metric_dimensions
-            else
-              namespace = options[:cloudwatch_namespace]
-              metric = namespace_or_metric
-              dimensions = custom_metric_dimensions
-            end
-
-            if script
-              metric_script << "#{metric}=$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})\n"
-              metric_script << %W(
-                mon-put-data
-                --metric-name '#{metric}'
-                --namespace '#{namespace}'
-                --dimensions '#{cloudwatch_dimensions(dimensions)}'
-                --unit '#{unit}'
-                --value "$#{metric}"
-              ).join(' ') << "\n"
-            end
-
-            if comparison
-              symptom = case comparison
-                        when :>, :>=; 'high'
-                        when :<, :<=; 'low'
-                        end
-              alarm_options = shared_alarm_options.merge({
-                :alarm_name => "#{options[:machine_name]}: #{friendly}",
-                :alarm_description => "Alerts if #{options[:machine_role]} machine #{options[:machine_name]} has #{symptom} #{friendly}.",
-
-                :namespace => namespace,
-                :metric_name => metric,
-                :dimensions => dimensions,
-
-                :comparison_operator => comparison,
-                :threshold => threshold,
-                :unit => unit,
-              })
-
-              setup_cloudwatch_alarm! alarm_options
-            end
-          end
-
-          create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
-
-          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
-          ensure_crontab_entry! monitor_command, :minute => '*/2'
-        end
-      end
 
       puts "Properties:"
       props.each do |property, value|
@@ -531,6 +348,213 @@ exec #{props[:REDIS_PATH]}/bin/redis-cli -a "$(~#{props[:REDIS_USER]}/bin/redisp
         split("\n").
         map {|line| line.split(':', 2) }.
         detect {|property, value| property == 'redis_version' }[1]
+    end
+
+
+    def setup_redis_backups(opts)
+      tempdir = opts[:tmp] or raise ArgumentError, 'must specify :tmp'
+      s3_access_key_id = opts[:s3_access_key_id] or raise ArgumentError, 'must specify :s3_access_key_id'
+      s3_secret_key = opts[:s3_secret_key] or raise ArgumentError, 'must specify :s3_secret_key'
+      s3_prefix = opts[:s3_prefix] or raise ArgumentError, 'must specify :s3_prefix'
+
+      as props[:REDIS_USER] do
+        inside "~#{props[:REDIS_USER]}" do
+          run! *%W(cp #{supplied 'bin/s3_gzbackup'} bin)
+
+          sudo! :mkdir, '-p', tempdir
+          sudo! :chmod, 'a+rwxt', tempdir
+
+          create_file! '.s3cfg', <<-S3CFG, :permissions => '600'
+[default]
+access_key = #{s3_access_key_id}
+secret_key = #{s3_secret_key}
+          S3CFG
+
+          backup_command = %W(
+            ~#{props[:REDIS_USER]}/bin/s3_gzbackup
+            --temp-dir='#{tempdir}'
+            #{props[:REDIS_PATH]}/dump.rdb
+            '#{s3_prefix}'
+          ).join(' ')
+
+          # make sure dump.rdb exists so the backup job doesn't fail
+          run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :save, :echo => false
+
+          ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
+        end
+      end
+    end
+
+
+    def setup_monitors_and_alarms(opts)
+      cloudwatch_access_key_id = opts[:cloudwatch_access_key_id] or raise ArgumentError, 'must specify :cloudwatch_access_key_id'
+      cloudwatch_secret_key = opts[:cloudwatch_secret_key] or raise ArgumentError, 'must specify :cloudwatch_secret_key'
+      props[:CLOUDWATCH_NAMESPACE] = opts[:cloudwatch_namespace] or raise ArgumentError, 'must specify :cloudwatch_namespace'
+      topic = opts[:sns_topic]
+
+      create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
+
+      as props[:CLOUDWATCH_USER] do
+        inside "~#{props[:CLOUDWATCH_USER]}" do
+          home = Dir.pwd
+
+          run! *%w(mkdir -p opt)
+          cloudwatch_dir = nil
+          inside 'opt' do
+            if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
+              run! :wget, '-q', CLOUDWATCH_TOOLS_URL unless File.exists? CLOUDWATCH_TOOLS_ZIP
+              run! :unzip, CLOUDWATCH_TOOLS_ZIP
+            end
+            cloudwatch_dirs = Dir.glob('CloudWatch-*').select {|dir| File.directory? dir }
+            case cloudwatch_dirs.size
+            when 1; cloudwatch_dir = cloudwatch_dirs[0]
+            when 0; raise 'Failed to install CloudWatch tools!'
+            else; raise 'Multiple versions of CloudWatch tools installed; confused.'
+            end
+          end
+          props[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
+
+          aws_credentials_path = "#{home}/.aws-credentials"
+          create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
+AWSAccessKeyId=#{cloudwatch_access_key_id}
+AWSSecretKey=#{cloudwatch_secret_key}
+          CREDS
+
+          ensure_sudoers_entry! :who => props[:CLOUDWATCH_USER],
+                                :as_who => props[:REDIS_USER],
+                                :nopasswd => true,
+                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
+                                :comment => "Allow #{props[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
+
+          run! *%w(mkdir -p bin)
+
+          env_vars = [
+            [:JAVA_HOME, OPENJDK_JAVA_HOME],
+            [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
+            [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
+            [:AWS_CREDENTIAL_FILE, aws_credentials_path],
+          ]
+          env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
+            "#{var}=#{value}; export #{var}"
+          end).join("\n")
+          setup_time_env_vars = env_vars.map do |var, value|
+            # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
+            expanded = value.
+              gsub('$PATH', ENV['PATH']).
+              gsub('$AWS_CLOUDWATCH_HOME', props[:CLOUDWATCH_TOOLS_PATH])
+            [var, expanded]
+          end
+
+          cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
+          create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
+
+          metric_script = <<-BASH
+#!/bin/bash -e
+export PATH=$PATH:$HOME/bin
+. aws-cloudwatch-env-vars.sh
+
+          BASH
+
+          custom_metric_dimensions = {
+            :MachineName => props[:MACHINE_NAME],
+            :MachineRole => props[:MACHINE_ROLE],
+          }
+          builtin_metric_dimensions = {}
+          if options[:ec2]
+            instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
+            custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
+          end
+          props[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
+
+          shared_alarm_options = {
+            :cloudwatch_tools_path => props[:CLOUDWATCH_TOOLS_PATH],
+            :env_vars => setup_time_env_vars,
+
+            :dimensions => custom_metric_dimensions,
+          }
+          if topic
+            props[:SNS_TOPIC] = topic
+            shared_alarm_options.merge!({
+              :actions_enabled => true,
+              :ok_actions => topic,
+              :alarm_actions => topic,
+              :insufficient_data_actions => topic,
+            })
+          else
+            props[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
+          end
+
+          metrics = [
+            # friendly                metric-name               script                  script-args                  unit       check
+            ['Free RAM',              :FreeRAMPercent,          'free-ram-percent.sh',  [],                          :Percent,  [:<,      20]],
+            ['Free Disk',             :FreeDiskPercent,         'free-disk-percent.sh', [],                          :Percent,  [:<,      20]],
+            ['Load Average (1min)',   :LoadAvg1Min,             'load-avg.sh',          [1],                         :Count,    nil          ],
+            ['Load Average (15min)',  :LoadAvg15Min,            'load-avg.sh',          [3],                         :Count,    [:>,     1.0]],
+            ['Redis Blocked Clients', :RedisBlockedClients,     'redis-metric.sh',      %w(blocked_clients),         :Count,    [:>,       5]],
+            ['Redis Evicted Keys',    :RedisEvictedKeys,        'redis-metric.sh',      %w(evicted_keys),            :Count,    nil          ],
+            ['Redis Used Memory',     :RedisUsedMemory,         'redis-metric.sh',      %w(used_memory),             :Bytes,    nil          ],
+            ['Redis Unsaved Changes', :RedisUnsavedChanges,     'redis-metric.sh',      %w(changes_since_last_save), :Count,    [:>, 300_000]],
+            ['Redis % of Max',        :RedisFullness,           'redis-fullness.sh',    [],                          :Percent,  nil          ],
+          ]
+
+          if options[:ec2]
+            metrics << ['CPU Usage', 'AWS/EC2:CPUUtilization',  nil,                    [],                  :Percent,  [:>,  90]]
+          end
+
+          metric_scripts = metrics.map {|_, _, script, _, _, _| supplied("bin/#{script}") if script }.compact.uniq
+          run! :cp, *(metric_scripts + [:bin])
+          metrics.each do |friendly, metric, script, args, unit, (comparison, threshold)|
+            namespace_or_metric, metric_or_nil = metric.to_s.split(':', 2)
+            if metric_or_nil
+              namespace = namespace_or_metric
+              metric = metric_or_nil
+              dimensions = builtin_metric_dimensions
+            else
+              namespace = props[:CLOUDWATCH_NAMESPACE]
+              metric = namespace_or_metric
+              dimensions = custom_metric_dimensions
+            end
+
+            if script
+              metric_script << "#{metric}=$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})\n"
+              metric_script << %W(
+                mon-put-data
+                --metric-name '#{metric}'
+                --namespace '#{namespace}'
+                --dimensions '#{cloudwatch_dimensions(dimensions)}'
+                --unit '#{unit}'
+                --value "$#{metric}"
+              ).join(' ') << "\n"
+            end
+
+            if comparison
+              symptom = case comparison
+                        when :>, :>=; 'high'
+                        when :<, :<=; 'low'
+                        end
+              alarm_options = shared_alarm_options.merge({
+                :alarm_name => "#{props[:MACHINE_NAME]}: #{friendly}",
+                :alarm_description => "Alerts if #{props[:MACHINE_ROLE]} machine #{props[:MACHINE_NAME]} has #{symptom} #{friendly}.",
+
+                :namespace => namespace,
+                :metric_name => metric,
+                :dimensions => dimensions,
+
+                :comparison_operator => comparison,
+                :threshold => threshold,
+                :unit => unit,
+              })
+
+              setup_cloudwatch_alarm! alarm_options
+            end
+          end
+
+          create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
+
+          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
+          ensure_crontab_entry! monitor_command, :minute => '*/2'
+        end
+      end
     end
 
 
