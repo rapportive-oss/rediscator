@@ -73,12 +73,10 @@ module Rediscator
     method_option :aws_iam_group, :desc => "AWS IAM group for backup and monitoring"
     method_option :iam_delete_oldest_key, :type => :boolean, :default => false, :desc => "If the IAM user already exists and already has the maximum allowed number of access keys, whether to delete the oldest key to make room."
     def setup
-      redis_version = options[:redis_version]
-      run_tests = options[:redis_run_tests]
       backup_tempdir = options[:backup_tempdir]
       backup_s3_prefix = options[:backup_s3_prefix]
 
-      install_prereqs :admin_email => options[:admin_email], :redis_run_tests => run_tests
+      install_prereqs :admin_email => options[:admin_email], :redis_run_tests => options[:redis_run_tests]
 
       iam_access_key = generate_access_key :username => options[:machine_name],
         :group => options[:aws_iam_group],
@@ -97,68 +95,52 @@ module Rediscator
       create_user @setup_properties[:REDIS_USER]
 
       @setup_properties.merge!({
-        :REDIS_VERSION => redis_version,
+        :REDIS_VERSION => options[:redis_version],
         :REDIS_MAX_MEMORY => options[:redis_max_memory],
         :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       })
 
+      @setup_properties[:REDIS_PATH] = install_redis :version => @setup_properties[:REDIS_VERSION],
+        :user => @setup_properties[:REDIS_USER],
+        :run_tests => options[:redis_run_tests]
+
       as @setup_properties[:REDIS_USER] do
-        inside "~#{@setup_properties[:REDIS_USER]}" do
-          run! *%w(mkdir -p opt)
-          inside 'opt' do
-            unless File.exists?("redis-#{redis_version}")
-              redis_tarball_url = if 'stable' == redis_version.downcase
-                                    'http://download.redis.io/redis-stable.tar.gz'
-                                  else
-                                    "http://redis.googlecode.com/files/redis-#{redis_version}.tar.gz"
-                                  end
-              run! :wget, redis_tarball_url
-              run! :tar, 'zxf', "redis-#{redis_version}.tar.gz"
+        inside @setup_properties[:REDIS_PATH] do
+          run! *%w(mkdir -p bin etc tmp)
 
-              inside "redis-#{redis_version}" do
-                run! :make
+          @setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
-                if run_tests
-                  package_install! 'tcl8.5'
-                  run! :make, :test
-                end
-              end
-            end
+          as :root do
+            create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
 
-            inside "redis-#{redis_version}" do
-              run! *%w(mkdir -p bin etc tmp)
-
-              @setup_properties[:REDIS_PATH] = Dir.pwd
-              @setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
-
-              as :root do
-                create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
-
-                if run!(*%w(status redis)).strip =~ %r{ start/running\b}
-                  run! *%w(stop redis)
-                end
-              end
-
-              %w(server cli).each do |thing|
-                run! *%W(cp src/redis-#{thing} bin)
-              end
-
-              config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-                [pattern, apply_substitutions(replacement, @setup_properties)]
-              end
-
-              default_conf = File.read('redis.conf')
-              substituted_conf = apply_substitutions(default_conf, config_substitutions)
-
-              create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
+            # If the Redis binaries are already in place and Redis is
+            # running, we'll get an error trying to overwrite the binaries,
+            # so stop it running first.
+            if run!(*%w(status redis)).strip =~ %r{ start/running\b}
+              run! *%w(stop redis)
             end
           end
 
-          sudo! *%w(start redis)
+          %w(server cli).each do |thing|
+            run! *%W(cp src/redis-#{thing} bin)
+          end
 
-          sleep 1
-          run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :ping, :echo => false
+          config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
+            [pattern, apply_substitutions(replacement, @setup_properties)]
+          end
 
+          default_conf = File.read('redis.conf')
+          substituted_conf = apply_substitutions(default_conf, config_substitutions)
+
+          create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
+        end
+
+        sudo! *%w(start redis)
+
+        sleep 1
+        run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :ping, :echo => false
+
+        inside "~#{@setup_properties[:REDIS_USER]}" do
           run! *%w(mkdir -p bin)
 
           create_file! 'bin/redispw', <<-SH, :permissions => '755'
@@ -491,6 +473,46 @@ export PATH=$PATH:$HOME/bin
       end
 
       @setup_properties[:REDIS_LOG] = REDIS_LOG
+    end
+
+
+    # Download and compile the desired version of Redis
+    def install_redis(opts)
+      user = opts[:user] or raise 'Must supply :user'
+      version = opts[:version] || 'stable'
+
+      redis_path = nil
+
+      as user do
+        inside "~#{user}" do
+          run! *%w(mkdir -p opt)
+
+          inside 'opt' do
+            unless File.exists?("redis-#{version}")
+              tarball_url = if 'stable' == version.downcase
+                              'http://download.redis.io/redis-stable.tar.gz'
+                            else
+                              "http://redis.googlecode.com/files/redis-#{version}.tar.gz"
+                            end
+              run! :wget, tarball_url
+              run! :tar, 'zxf', "redis-#{version}.tar.gz"
+            end
+
+            inside "redis-#{version}" do
+              run! :make
+
+              if opts[:run_tests]
+                package_install! 'tcl8.5'
+                run! :make, :test
+              end
+
+              redis_path = Dir.pwd
+            end
+          end
+        end
+      end
+
+      redis_path
     end
 
 
