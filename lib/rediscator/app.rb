@@ -94,9 +94,7 @@ module Rediscator
       sudo! *%w(restart rsyslog)
 
       @setup_properties[:REDIS_USER] = REDIS_USER
-      unless user_exists?(@setup_properties[:REDIS_USER])
-        sudo! *%W(adduser --disabled-login --gecos Redis,,, #{@setup_properties[:REDIS_USER]})
-      end
+      create_user @setup_properties[:REDIS_USER]
 
       @setup_properties.merge!({
         :REDIS_VERSION => redis_version,
@@ -106,8 +104,6 @@ module Rediscator
 
       as @setup_properties[:REDIS_USER] do
         inside "~#{@setup_properties[:REDIS_USER]}" do
-          create_file! '.forward', 'root'
-
           run! *%w(mkdir -p opt)
           inside 'opt' do
             unless File.exists?("redis-#{redis_version}")
@@ -209,15 +205,12 @@ secret_key = #{aws_secret_key}
 
 
       @setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
-      unless user_exists?(@setup_properties[:CLOUDWATCH_USER])
-        sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{@setup_properties[:CLOUDWATCH_USER]})
-      end
+      create_user @setup_properties[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
+
 
       as @setup_properties[:CLOUDWATCH_USER] do
         inside "~#{@setup_properties[:CLOUDWATCH_USER]}" do
           home = Dir.pwd
-
-          create_file! '.forward', 'root'
 
           run! *%w(mkdir -p opt)
           cloudwatch_dir = nil
@@ -508,6 +501,27 @@ export PATH=$PATH:$HOME/bin
     def from_template(template_name)
       template = File.read(supplied(template_name))
       apply_substitutions(template, @setup_properties)
+    end
+
+    # Create a user with login disabled and mail going to root
+    def create_user(username, opts = {})
+      description = opts[:description] || username.sub(/[a-z]/) {|initial| initial.upcase }
+      unless user_exists?(username)
+        sudo! *%W(adduser --disabled-login --gecos #{description},,, #{username})
+      end
+
+      home = nil
+      as username do
+        inside "~#{username}" do
+          create_file! '.forward', 'root'
+          home = Dir.pwd
+        end
+      end
+
+      {
+        :username => username,
+        :home => home,
+      }
     end
   end
 end
