@@ -108,10 +108,9 @@ module Rediscator
       sudo! *%w(start redis)
 
       sleep 1
+      run_as! props[:REDIS_USER], "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
 
       as props[:REDIS_USER] do
-        run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
-
         inside "~#{props[:REDIS_USER]}" do
           run! *%w(mkdir -p bin)
 
