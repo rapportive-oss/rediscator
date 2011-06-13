@@ -93,10 +93,10 @@ module Rediscator
       setup_redis_log
       sudo! *%w(restart rsyslog)
 
-      unless user_exists?(REDIS_USER)
-        sudo! *%W(adduser --disabled-login --gecos Redis,,, #{REDIS_USER})
-      end
       @setup_properties[:REDIS_USER] = REDIS_USER
+      unless user_exists?(@setup_properties[:REDIS_USER])
+        sudo! *%W(adduser --disabled-login --gecos Redis,,, #{@setup_properties[:REDIS_USER]})
+      end
 
       @setup_properties.merge!({
         :REDIS_VERSION => redis_version,
@@ -104,8 +104,8 @@ module Rediscator
         :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       })
 
-      as REDIS_USER do
-        inside "~#{REDIS_USER}" do
+      as @setup_properties[:REDIS_USER] do
+        inside "~#{@setup_properties[:REDIS_USER]}" do
           create_file! '.forward', 'root'
 
           run! *%w(mkdir -p opt)
@@ -172,7 +172,7 @@ grep ^requirepass #{@setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -
 
           create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
 #!/bin/sh -e
-exec #{@setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$($(dirname $0)/redispw)" "$@"
+exec #{@setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$(~#{@setup_properties[:REDIS_USER]}/bin/redispw)" "$@"
           SH
 
           ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
@@ -194,7 +194,7 @@ secret_key = #{aws_secret_key}
           S3CFG
 
           backup_command = %W(
-            ~#{REDIS_USER}/bin/s3_gzbackup
+            ~#{@setup_properties[:REDIS_USER]}/bin/s3_gzbackup
             --temp-dir='#{backup_tempdir}'
             #{@setup_properties[:REDIS_PATH]}/dump.rdb
             '#{backup_s3_prefix}'
@@ -208,13 +208,13 @@ secret_key = #{aws_secret_key}
       end
 
 
-      unless user_exists?(CLOUDWATCH_USER)
-        sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{CLOUDWATCH_USER})
-      end
       @setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
+      unless user_exists?(@setup_properties[:CLOUDWATCH_USER])
+        sudo! *%W(adduser --disabled-login --gecos Amazon\ Cloudwatch\ monitor,,, #{@setup_properties[:CLOUDWATCH_USER]})
+      end
 
-      as CLOUDWATCH_USER do
-        inside "~#{CLOUDWATCH_USER}" do
+      as @setup_properties[:CLOUDWATCH_USER] do
+        inside "~#{@setup_properties[:CLOUDWATCH_USER]}" do
           home = Dir.pwd
 
           create_file! '.forward', 'root'
@@ -241,11 +241,11 @@ AWSAccessKeyId=#{aws_access_key}
 AWSSecretKey=#{aws_secret_key}
           CREDS
 
-          ensure_sudoers_entry! :who => CLOUDWATCH_USER,
-                                :as_who => REDIS_USER,
+          ensure_sudoers_entry! :who => @setup_properties[:CLOUDWATCH_USER],
+                                :as_who => @setup_properties[:REDIS_USER],
                                 :nopasswd => true,
-                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{REDIS_USER}/bin/authed-redis-cli #{command}" },
-                                :comment => "Allow #{CLOUDWATCH_USER} to gather Redis metrics, but not do anything else to Redis"
+                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{@setup_properties[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
+                                :comment => "Allow #{@setup_properties[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
 
           run! *%w(mkdir -p bin)
 
