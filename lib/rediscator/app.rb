@@ -110,27 +110,13 @@ module Rediscator
       sleep 1
       run_as! props[:REDIS_USER], "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
 
+      install_authed_redis_cli
+      detect_redis_version
+
       as props[:REDIS_USER] do
+        ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
+
         inside "~#{props[:REDIS_USER]}" do
-          run! *%w(mkdir -p bin)
-
-          create_file! 'bin/redispw', <<-SH, :permissions => '755'
-#!/bin/sh -e
-grep ^requirepass #{props[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
-          SH
-
-          create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
-#!/bin/sh -e
-exec #{props[:REDIS_PATH]}/bin/redis-cli -a "$(~#{props[:REDIS_USER]}/bin/redispw)" "$@"
-          SH
-
-          ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
-
-          props[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
-            split("\n").
-            map {|line| line.split(':', 2) }.
-            detect {|property, value| property == 'redis_version' }[1]
-
           run! *%W(cp #{supplied 'bin/s3_gzbackup'} bin)
 
           sudo! :mkdir, '-p', backup_tempdir
@@ -518,6 +504,33 @@ export PATH=$PATH:$HOME/bin
           create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
         end
       end
+    end
+
+
+    def install_authed_redis_cli
+      as props[:REDIS_USER] do
+        inside "~#{props[:REDIS_USER]}" do
+          run! *%w(mkdir -p bin)
+
+          create_file! 'bin/redispw', <<-SH, :permissions => '755'
+#!/bin/sh -e
+grep ^requirepass #{props[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
+          SH
+
+          create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
+#!/bin/sh -e
+exec #{props[:REDIS_PATH]}/bin/redis-cli -a "$(~#{props[:REDIS_USER]}/bin/redispw)" "$@"
+          SH
+        end
+      end
+    end
+
+
+    def detect_redis_version
+      props[:REDIS_VERSION] = run_as!(props[:REDIS_USER], "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli", :info).
+        split("\n").
+        map {|line| line.split(':', 2) }.
+        detect {|property, value| property == 'redis_version' }[1]
     end
 
 
