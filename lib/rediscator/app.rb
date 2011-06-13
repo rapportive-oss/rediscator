@@ -22,6 +22,7 @@ module Rediscator
       openjdk-6-jre-headless
       unzip
       postfix
+      heirloom-mailx
     )
 
     OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
