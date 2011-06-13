@@ -35,4 +35,4 @@ trap 'rm "$tempfile"' EXIT
 
 gzip <"$src" >"$tempfile"
 
-s3cmd --no-progress put "$tempfile" "$dest/$today-$name.gz"
+s3cmd --no-progress put "$tempfile" "$dest/$today-$name.gz" >/dev/null
