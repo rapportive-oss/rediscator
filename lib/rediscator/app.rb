@@ -100,44 +100,16 @@ module Rediscator
         :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       })
 
-      props[:REDIS_PATH] = install_redis :version => props[:REDIS_VERSION],
-        :user => props[:REDIS_USER],
+      install_redis :version => props[:REDIS_VERSION],
         :run_tests => options[:redis_run_tests]
 
+      configure_redis
+
+      sudo! *%w(start redis)
+
+      sleep 1
+
       as props[:REDIS_USER] do
-        inside props[:REDIS_PATH] do
-          run! *%w(mkdir -p bin etc tmp)
-
-          props[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
-
-          as :root do
-            create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
-
-            # If the Redis binaries are already in place and Redis is
-            # running, we'll get an error trying to overwrite the binaries,
-            # so stop it running first.
-            if run!(*%w(status redis)).strip =~ %r{ start/running\b}
-              run! *%w(stop redis)
-            end
-          end
-
-          %w(server cli).each do |thing|
-            run! *%W(cp src/redis-#{thing} bin)
-          end
-
-          config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-            [pattern, apply_substitutions(replacement, props)]
-          end
-
-          default_conf = File.read('redis.conf')
-          substituted_conf = apply_substitutions(default_conf, config_substitutions)
-
-          create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
-        end
-
-        sudo! *%w(start redis)
-
-        sleep 1
         run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
 
         inside "~#{props[:REDIS_USER]}" do
@@ -478,13 +450,12 @@ export PATH=$PATH:$HOME/bin
 
     # Download and compile the desired version of Redis
     def install_redis(opts)
-      user = opts[:user] or raise 'Must supply :user'
       version = opts[:version] || 'stable'
 
       redis_path = nil
 
-      as user do
-        inside "~#{user}" do
+      as props[:REDIS_USER] do
+        inside "~#{props[:REDIS_USER]}" do
           run! *%w(mkdir -p opt)
 
           inside 'opt' do
@@ -512,7 +483,42 @@ export PATH=$PATH:$HOME/bin
         end
       end
 
-      redis_path
+      props[:REDIS_PATH] = redis_path
+    end
+
+
+    def configure_redis
+      as props[:REDIS_USER] do
+        inside props[:REDIS_PATH] do
+          run! *%w(mkdir -p bin etc tmp)
+
+          props[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
+
+          as :root do
+            create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
+
+            # If the Redis binaries are already in place and Redis is
+            # running, we'll get an error trying to overwrite the binaries,
+            # so stop it running first.
+            if run!(*%w(status redis)).strip =~ %r{ start/running\b}
+              run! *%w(stop redis)
+            end
+          end
+
+          %w(server cli).each do |thing|
+            run! *%W(cp src/redis-#{thing} bin)
+          end
+
+          config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
+            [pattern, apply_substitutions(replacement, props)]
+          end
+
+          default_conf = File.read('redis.conf')
+          substituted_conf = apply_substitutions(default_conf, config_substitutions)
+
+          create_file! 'etc/redis.conf', substituted_conf, :permissions => '640'
+        end
+      end
     end
 
 
