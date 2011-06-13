@@ -83,7 +83,7 @@ module Rediscator
         :delete_oldest_key => options[:iam_delete_oldest_key],
         :access_key_id => options[:aws_access_key],
         :secret_key => options[:aws_secret_key]
-      @setup_properties[:IAM_USERNAME], aws_access_key, aws_secret_key = iam_access_key.values_at(:user_name, :access_key_id, :secret_access_key)
+      props[:IAM_USERNAME], aws_access_key, aws_secret_key = iam_access_key.values_at(:user_name, :access_key_id, :secret_access_key)
 
       install_crash_warning
 
@@ -91,24 +91,24 @@ module Rediscator
       setup_redis_log
       sudo! *%w(restart rsyslog)
 
-      @setup_properties[:REDIS_USER] = REDIS_USER
-      create_user @setup_properties[:REDIS_USER]
+      props[:REDIS_USER] = REDIS_USER
+      create_user props[:REDIS_USER]
 
-      @setup_properties.merge!({
+      props.merge!({
         :REDIS_VERSION => options[:redis_version],
         :REDIS_MAX_MEMORY => options[:redis_max_memory],
         :REDIS_MAX_MEMORY_POLICY => options[:redis_max_memory_policy],
       })
 
-      @setup_properties[:REDIS_PATH] = install_redis :version => @setup_properties[:REDIS_VERSION],
-        :user => @setup_properties[:REDIS_USER],
+      props[:REDIS_PATH] = install_redis :version => props[:REDIS_VERSION],
+        :user => props[:REDIS_USER],
         :run_tests => options[:redis_run_tests]
 
-      as @setup_properties[:REDIS_USER] do
-        inside @setup_properties[:REDIS_PATH] do
+      as props[:REDIS_USER] do
+        inside props[:REDIS_PATH] do
           run! *%w(mkdir -p bin etc tmp)
 
-          @setup_properties[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
+          props[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
 
           as :root do
             create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
@@ -126,7 +126,7 @@ module Rediscator
           end
 
           config_substitutions = REDIS_CONFIG_SUBSTITUTIONS.map do |pattern, replacement|
-            [pattern, apply_substitutions(replacement, @setup_properties)]
+            [pattern, apply_substitutions(replacement, props)]
           end
 
           default_conf = File.read('redis.conf')
@@ -138,24 +138,24 @@ module Rediscator
         sudo! *%w(start redis)
 
         sleep 1
-        run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :ping, :echo => false
+        run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
 
-        inside "~#{@setup_properties[:REDIS_USER]}" do
+        inside "~#{props[:REDIS_USER]}" do
           run! *%w(mkdir -p bin)
 
           create_file! 'bin/redispw', <<-SH, :permissions => '755'
 #!/bin/sh -e
-grep ^requirepass #{@setup_properties[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
+grep ^requirepass #{props[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
           SH
 
           create_file! 'bin/authed-redis-cli', <<-SH, :permissions => '755'
 #!/bin/sh -e
-exec #{@setup_properties[:REDIS_PATH]}/bin/redis-cli -a "$(~#{@setup_properties[:REDIS_USER]}/bin/redispw)" "$@"
+exec #{props[:REDIS_PATH]}/bin/redis-cli -a "$(~#{props[:REDIS_USER]}/bin/redispw)" "$@"
           SH
 
           ensure_crontab_entry! 'bin/authed-redis-cli PING | { grep -v PONG || true; }', :minute => '*'
 
-          @setup_properties[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
+          props[:REDIS_VERSION] = run!('bin/authed-redis-cli', :info).
             split("\n").
             map {|line| line.split(':', 2) }.
             detect {|property, value| property == 'redis_version' }[1]
@@ -172,26 +172,26 @@ secret_key = #{aws_secret_key}
           S3CFG
 
           backup_command = %W(
-            ~#{@setup_properties[:REDIS_USER]}/bin/s3_gzbackup
+            ~#{props[:REDIS_USER]}/bin/s3_gzbackup
             --temp-dir='#{backup_tempdir}'
-            #{@setup_properties[:REDIS_PATH]}/dump.rdb
+            #{props[:REDIS_PATH]}/dump.rdb
             '#{backup_s3_prefix}'
           ).join(' ')
 
           # make sure dump.rdb exists so the backup job doesn't fail
-          run! "#{@setup_properties[:REDIS_PATH]}/bin/redis-cli", '-a', @setup_properties[:REDIS_PASSWORD], :save, :echo => false
+          run! "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :save, :echo => false
 
           ensure_crontab_entry! backup_command, :hour => '03', :minute => '42'
         end
       end
 
 
-      @setup_properties[:CLOUDWATCH_USER] = CLOUDWATCH_USER
-      create_user @setup_properties[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
+      props[:CLOUDWATCH_USER] = CLOUDWATCH_USER
+      create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
 
 
-      as @setup_properties[:CLOUDWATCH_USER] do
-        inside "~#{@setup_properties[:CLOUDWATCH_USER]}" do
+      as props[:CLOUDWATCH_USER] do
+        inside "~#{props[:CLOUDWATCH_USER]}" do
           home = Dir.pwd
 
           run! *%w(mkdir -p opt)
@@ -208,7 +208,7 @@ secret_key = #{aws_secret_key}
             else; raise 'Multiple versions of CloudWatch tools installed; confused.'
             end
           end
-          @setup_properties[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
+          props[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
 
           aws_credentials_path = "#{home}/.aws-credentials"
           create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
@@ -216,17 +216,17 @@ AWSAccessKeyId=#{aws_access_key}
 AWSSecretKey=#{aws_secret_key}
           CREDS
 
-          ensure_sudoers_entry! :who => @setup_properties[:CLOUDWATCH_USER],
-                                :as_who => @setup_properties[:REDIS_USER],
+          ensure_sudoers_entry! :who => props[:CLOUDWATCH_USER],
+                                :as_who => props[:REDIS_USER],
                                 :nopasswd => true,
-                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{@setup_properties[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
-                                :comment => "Allow #{@setup_properties[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
+                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
+                                :comment => "Allow #{props[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
 
           run! *%w(mkdir -p bin)
 
           env_vars = [
             [:JAVA_HOME, OPENJDK_JAVA_HOME],
-            [:AWS_CLOUDWATCH_HOME, @setup_properties[:CLOUDWATCH_TOOLS_PATH]],
+            [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
             [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
             [:AWS_CREDENTIAL_FILE, aws_credentials_path],
           ]
@@ -237,7 +237,7 @@ AWSSecretKey=#{aws_secret_key}
             # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
             expanded = value.
               gsub('$PATH', ENV['PATH']).
-              gsub('$AWS_CLOUDWATCH_HOME', @setup_properties[:CLOUDWATCH_TOOLS_PATH])
+              gsub('$AWS_CLOUDWATCH_HOME', props[:CLOUDWATCH_TOOLS_PATH])
             [var, expanded]
           end
 
@@ -251,7 +251,7 @@ export PATH=$PATH:$HOME/bin
 
           BASH
 
-          @setup_properties[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
+          props[:CLOUDWATCH_NAMESPACE] = options[:cloudwatch_namespace]
           custom_metric_dimensions = {
             :MachineName => options[:machine_name],
             :MachineRole => options[:machine_role],
@@ -261,17 +261,17 @@ export PATH=$PATH:$HOME/bin
             instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
             custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
           end
-          @setup_properties[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
+          props[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
 
           shared_alarm_options = {
-            :cloudwatch_tools_path => @setup_properties[:CLOUDWATCH_TOOLS_PATH],
+            :cloudwatch_tools_path => props[:CLOUDWATCH_TOOLS_PATH],
             :env_vars => setup_time_env_vars,
 
             :dimensions => custom_metric_dimensions,
           }
           if options[:sns_topic]
             topic = options[:sns_topic]
-            @setup_properties[:SNS_TOPIC] = topic
+            props[:SNS_TOPIC] = topic
             shared_alarm_options.merge!({
               :actions_enabled => true,
               :ok_actions => topic,
@@ -279,7 +279,7 @@ export PATH=$PATH:$HOME/bin
               :insufficient_data_actions => topic,
             })
           else
-            @setup_properties[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
+            props[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
           end
 
           metrics = [
@@ -355,7 +355,7 @@ export PATH=$PATH:$HOME/bin
       end
 
       puts "Properties:"
-      @setup_properties.each do |property, value|
+      props.each do |property, value|
         puts "\t#{property}:\t#{value}"
       end
     end
@@ -363,11 +363,11 @@ export PATH=$PATH:$HOME/bin
 
     private
     def install_prereqs(opts)
-      unless @setup_properties[:MACHINE_NAME] =~ /\w+\.\w+$/
+      unless props[:MACHINE_NAME] =~ /\w+\.\w+$/
         raise ArgumentError, "--machine-name should be a FQDN or Postfix will break :("
       end
 
-      @setup_properties[:ADMIN_EMAIL] = opts[:admin_email] or raise ArgumentError, 'must specify :admin_email'
+      props[:ADMIN_EMAIL] = opts[:admin_email] or raise ArgumentError, 'must specify :admin_email'
 
       sudo! 'apt-get', :update
 
@@ -472,7 +472,7 @@ export PATH=$PATH:$HOME/bin
         LOGROTATE
       end
 
-      @setup_properties[:REDIS_LOG] = REDIS_LOG
+      props[:REDIS_LOG] = REDIS_LOG
     end
 
 
@@ -515,6 +515,10 @@ export PATH=$PATH:$HOME/bin
       redis_path
     end
 
+
+    def props
+      @setup_properties
+    end
 
     def supplied(*args)
       File.join(@rediscator_path, *args)
