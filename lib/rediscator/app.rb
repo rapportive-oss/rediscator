@@ -300,7 +300,7 @@ module Rediscator
         inside props[:REDIS_PATH] do
           run! *%w(mkdir -p bin etc tmp)
 
-          props[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals --symbols 16 1)).strip
+          props[:REDIS_PASSWORD] = run!(*%w(pwgen --capitalize --numerals 16 1)).strip
 
           as :root do
             create_file! '/etc/init/redis.conf', from_template('etc/redis.upstart')
