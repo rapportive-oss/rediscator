@@ -152,6 +152,11 @@ module Rediscator
       packages << 'tcl8.5' if opts[:redis_run_tests]
 
       package_install! *packages
+
+      sudo! 'sh', '-c', 'echo 1 > /proc/sys/vm/overcommit_memory'
+      as :root do
+        create_file! '/etc/sysctl.d/20-overcommit_for_redis.conf', "vm.overcommit_memory = 1\n"
+      end
     end
 
 
