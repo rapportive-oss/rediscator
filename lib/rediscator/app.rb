@@ -106,9 +106,6 @@ module Rediscator
 
       sudo! *%w(start redis)
 
-      sleep 1
-      run_as! props[:REDIS_USER], "#{props[:REDIS_PATH]}/bin/redis-cli", '-a', props[:REDIS_PASSWORD], :ping, :echo => false
-
       install_authed_redis_cli
       detect_redis_version
 
@@ -344,6 +341,13 @@ grep ^requirepass #{props[:REDIS_PATH]}/etc/redis.conf | cut -d' ' -f2
 #!/bin/sh -e
 exec #{props[:REDIS_PATH]}/bin/redis-cli -a "$(~#{props[:REDIS_USER]}/bin/redispw)" "$@"
           SH
+
+          sleep 1
+          puts "Pinging Redis to check it's up..."
+          pong = run!(*%w(bin/authed-redis-cli PING))
+          unless 'PONG' == pong.strip
+            raise "Unexpected response from ping, Redis may be broken: #{pong}"
+          end
         end
       end
     end
