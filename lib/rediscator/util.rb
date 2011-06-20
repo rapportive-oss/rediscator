@@ -61,7 +61,7 @@ module Rediscator
     end
 
     def run_as!(user, *args)
-      sudo! '-u', user, *args
+      sudo! '-H', '-u', user, *args
     end
 
     def as(user)
