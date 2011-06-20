@@ -120,6 +120,10 @@ module Rediscator
 
 
       props[:CLOUDWATCH_USER] = CLOUDWATCH_USER
+      create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
+
+      install_cloudwatch_tools :cloudwatch_access_key_id => aws_access_key, :cloudwatch_secret_key => aws_secret_key
+
       setup_monitors_and_alarms :cloudwatch_namespace => options[:cloudwatch_namespace],
         :cloudwatch_access_key_id => aws_access_key,
         :cloudwatch_secret_key => aws_secret_key,
@@ -396,20 +400,13 @@ secret_key = #{s3_secret_key}
     end
 
 
-    def setup_monitors_and_alarms(opts)
+    def install_cloudwatch_tools(opts)
       cloudwatch_access_key_id = opts[:cloudwatch_access_key_id] or raise ArgumentError, 'must specify :cloudwatch_access_key_id'
       cloudwatch_secret_key = opts[:cloudwatch_secret_key] or raise ArgumentError, 'must specify :cloudwatch_secret_key'
-      props[:CLOUDWATCH_NAMESPACE] = opts[:cloudwatch_namespace] or raise ArgumentError, 'must specify :cloudwatch_namespace'
-      topic = opts[:sns_topic]
-
-      create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
 
       as props[:CLOUDWATCH_USER] do
         inside "~#{props[:CLOUDWATCH_USER]}" do
-          home = Dir.pwd
-
           run! *%w(mkdir -p opt)
-          cloudwatch_dir = nil
           inside 'opt' do
             if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
               run! :wget, '-q', CLOUDWATCH_TOOLS_URL unless File.exists? CLOUDWATCH_TOOLS_ZIP
@@ -421,20 +418,15 @@ secret_key = #{s3_secret_key}
             when 0; raise 'Failed to install CloudWatch tools!'
             else; raise 'Multiple versions of CloudWatch tools installed; confused.'
             end
-          end
-          props[:CLOUDWATCH_TOOLS_PATH] = "#{home}/opt/#{cloudwatch_dir}"
 
-          aws_credentials_path = "#{home}/.aws-credentials"
-          create_file! aws_credentials_path, <<-CREDS, :permissions => '600'
+            props[:CLOUDWATCH_TOOLS_PATH] = "#{Dir.pwd}/#{cloudwatch_dir}"
+          end
+
+          props[:CLOUDWATCH_AWS_CREDENTIALS_PATH] = "#{Dir.pwd}/.aws-credentials"
+          create_file! props[:CLOUDWATCH_AWS_CREDENTIALS_PATH], <<-CREDS, :permissions => '600'
 AWSAccessKeyId=#{cloudwatch_access_key_id}
 AWSSecretKey=#{cloudwatch_secret_key}
           CREDS
-
-          ensure_sudoers_entry! :who => props[:CLOUDWATCH_USER],
-                                :as_who => props[:REDIS_USER],
-                                :nopasswd => true,
-                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
-                                :comment => "Allow #{props[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
 
           run! *%w(mkdir -p bin)
 
@@ -442,12 +434,12 @@ AWSSecretKey=#{cloudwatch_secret_key}
             [:JAVA_HOME, OPENJDK_JAVA_HOME],
             [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
             [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
-            [:AWS_CREDENTIAL_FILE, aws_credentials_path],
+            [:AWS_CREDENTIAL_FILE, props[:CLOUDWATCH_AWS_CREDENTIALS_PATH]],
           ]
           env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
             "#{var}=#{value}; export #{var}"
           end).join("\n")
-          setup_time_env_vars = env_vars.map do |var, value|
+          props[:CLOUDWATCH_ENV] = env_vars.map do |var, value|
             # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
             expanded = value.
               gsub('$PATH', ENV['PATH']).
@@ -455,8 +447,27 @@ AWSSecretKey=#{cloudwatch_secret_key}
             [var, expanded]
           end
 
-          cloudwatch_env_vars_path = "#{home}/bin/aws-cloudwatch-env-vars.sh"
-          create_file! cloudwatch_env_vars_path, env_vars_script, :permissions => '+rwx'
+          create_file!  'bin/aws-cloudwatch-env-vars.sh', env_vars_script, :permissions => '+rwx'
+        end
+      end
+    end
+
+
+    def setup_monitors_and_alarms(opts)
+      cloudwatch_access_key_id = opts[:cloudwatch_access_key_id] or raise ArgumentError, 'must specify :cloudwatch_access_key_id'
+      cloudwatch_secret_key = opts[:cloudwatch_secret_key] or raise ArgumentError, 'must specify :cloudwatch_secret_key'
+      props[:CLOUDWATCH_NAMESPACE] = opts[:cloudwatch_namespace] or raise ArgumentError, 'must specify :cloudwatch_namespace'
+      topic = opts[:sns_topic]
+
+      as props[:CLOUDWATCH_USER] do
+        inside "~#{props[:CLOUDWATCH_USER]}" do
+          ensure_sudoers_entry! :who => props[:CLOUDWATCH_USER],
+                                :as_who => props[:REDIS_USER],
+                                :nopasswd => true,
+                                :commands => ['INFO', 'CONFIG GET*'].map {|command| "/home/#{props[:REDIS_USER]}/bin/authed-redis-cli #{command}" },
+                                :comment => "Allow #{props[:CLOUDWATCH_USER]} to gather Redis metrics, but not do anything else to Redis"
+
+          run! *%w(mkdir -p bin)
 
           metric_script = <<-BASH
 #!/bin/bash -e
@@ -478,7 +489,7 @@ export PATH=$PATH:$HOME/bin
 
           shared_alarm_options = {
             :cloudwatch_tools_path => props[:CLOUDWATCH_TOOLS_PATH],
-            :env_vars => setup_time_env_vars,
+            :env_vars => props[:CLOUDWATCH_ENV],
 
             :dimensions => custom_metric_dimensions,
           }
