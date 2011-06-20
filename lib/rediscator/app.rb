@@ -479,12 +479,42 @@ AWSSecretKey=#{cloudwatch_secret_key}
 
           run! *%w(mkdir -p bin)
 
-          metric_script = <<-BASH
-#!/bin/bash -e
-export PATH=$PATH:$HOME/bin
-. aws-cloudwatch-env-vars.sh
+          metric_script = <<-RUBY
+#!/usr/bin/ruby
 
-          BASH
+require 'logger'
+
+require 'open4'
+require 'right_aws'
+
+# Simplified version of Rediscator::Util#system!
+def system!(*args)
+  out = ''
+  err = ''
+  args.map!(&:to_s)
+  open4.spawn(*(args + [{:stdout => out, :stderr => err}]))
+  out
+rescue Open4::SpawnError => e
+  message = "command '\#{args.join(' ')}' failed with status \#{e.exitstatus}"
+  message << ': ' << err.strip unless err.strip.empty?
+  message << "\\nSTDOUT for '\#{command}':\\n---------------\\n\#{out.strip}" unless out.strip.empty?
+  raise message
+rescue SystemCallError => e
+  raise "command '\#{args.join(' ')}' failed: \#{e}"
+end
+
+credentials = Hash[*File.read(#{props[:CLOUDWATCH_AWS_CREDENTIALS_PATH].inspect}).map do |line|
+  line.strip.split('=', 2)
+end.flatten]
+
+aws_access_key_id = credentials['AWSAccessKeyId'] or raise 'Credentials file missing AWSAccessKeyId'
+aws_secret_access_key = credentials['AWSSecretKey'] or raise 'Credentials file missing AWSSecretKey'
+
+logger = Logger.new(STDOUT)
+logger.level = Logger::WARN # don't shout about normal behaviour
+acw = RightAws::AcwInterface.new(aws_access_key_id, aws_secret_access_key, :logger => logger)
+
+          RUBY
 
           custom_metric_dimensions = {
             :MachineName => props[:MACHINE_NAME],
@@ -547,15 +577,15 @@ export PATH=$PATH:$HOME/bin
             end
 
             if script
-              metric_script << "#{metric}=$(#{script} #{args.map {|arg| "'#{arg}'" }.join(' ')})\n"
-              metric_script << %W(
-                mon-put-data
-                --metric-name '#{metric}'
-                --namespace '#{namespace}'
-                --dimensions '#{cloudwatch_dimensions(dimensions)}'
-                --unit '#{unit}'
-                --value "$#{metric}"
-              ).join(' ') << "\n"
+              metric_script << <<-RUBY
+#{metric} = system!(#{(['bin/' + script] + args).map(&:inspect).join(', ')})
+acw.put_metric_data(
+  :metric_name => #{metric.to_s.inspect},
+  :namespace => #{namespace.inspect},
+  :dimensions => #{dimensions.inspect},
+  :unit => #{unit.to_s.inspect},
+  :value => #{metric})
+              RUBY
             end
 
             if comparison
@@ -580,9 +610,9 @@ export PATH=$PATH:$HOME/bin
             end
           end
 
-          create_file! 'bin/log-cloudwatch-metrics.sh', metric_script, :permissions => '+rwx'
+          create_file! 'bin/log-cloudwatch-metrics.rb', metric_script, :permissions => '+rwx'
 
-          monitor_command = "$HOME/bin/log-cloudwatch-metrics.sh"
+          monitor_command = "BUNDLE_GEMFILE=$HOME/Gemfile bundle exec $HOME/bin/log-cloudwatch-metrics.rb"
           ensure_crontab_entry! monitor_command, :minute => '*/2'
         end
       end
