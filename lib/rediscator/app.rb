@@ -23,6 +23,7 @@ module Rediscator
       unzip
       postfix
       heirloom-mailx
+      git-core
     )
 
     OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
@@ -33,6 +34,8 @@ module Rediscator
     CLOUDWATCH_USER = 'cloudwatch'
     CLOUDWATCH_TOOLS_ZIP = 'CloudWatch-2010-08-01.zip'
     CLOUDWATCH_TOOLS_URL = "http://ec2-downloads.s3.amazonaws.com/#{CLOUDWATCH_TOOLS_ZIP}"
+
+    RIGHT_AWS_REPO = 'git://github.com/rapportive-oss/right_aws.git'
 
     REDIS_CONFIG_SUBSTITUTIONS = {
       /^daemonize .*$/ => 'daemonize no', # since we're using upstart to run it
@@ -406,6 +409,13 @@ secret_key = #{s3_secret_key}
 
       as props[:CLOUDWATCH_USER] do
         inside "~#{props[:CLOUDWATCH_USER]}" do
+          create_file! 'Gemfile', <<-GEMFILE
+source 'http://rubygems.org'
+gem 'open4'
+gem 'right_aws', :git => #{RIGHT_AWS_REPO.inspect}
+          GEMFILE
+          run! *%w(bundle install)
+
           run! *%w(mkdir -p opt)
           inside 'opt' do
             if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
