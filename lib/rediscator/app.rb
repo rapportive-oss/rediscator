@@ -412,7 +412,7 @@ secret_key = #{s3_secret_key}
           create_file! 'Gemfile', <<-GEMFILE
 source 'http://rubygems.org'
 gem 'open4'
-gem 'right_aws', :git => #{RIGHT_AWS_REPO.inspect}
+gem 'right_aws', '~> 2.2.0', :git => #{RIGHT_AWS_REPO.inspect}
           GEMFILE
           run! *%w(bundle install)
 
