@@ -613,7 +613,7 @@ acw.put_metric_data(
           create_file! 'bin/log-cloudwatch-metrics.rb', metric_script, :permissions => '+rwx'
 
           monitor_command = "BUNDLE_GEMFILE=$HOME/Gemfile bundle exec $HOME/bin/log-cloudwatch-metrics.rb"
-          ensure_crontab_entry! monitor_command, :minute => '*/2'
+          ensure_crontab_entry! monitor_command, :minute => '*'
         end
       end
     end
