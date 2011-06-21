@@ -19,21 +19,15 @@ module Rediscator
       build-essential
       pwgen
       s3cmd
-      openjdk-6-jre-headless
-      unzip
       postfix
       heirloom-mailx
       git-core
     )
 
-    OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
-
     REDIS_USER = 'redis'
     REDIS_LOG = '/var/log/redis.log'
 
     CLOUDWATCH_USER = 'cloudwatch'
-    CLOUDWATCH_TOOLS_ZIP = 'CloudWatch-2010-08-01.zip'
-    CLOUDWATCH_TOOLS_URL = "http://ec2-downloads.s3.amazonaws.com/#{CLOUDWATCH_TOOLS_ZIP}"
 
     RIGHT_AWS_REPO = 'git://github.com/rapportive-oss/right_aws.git'
 
@@ -125,7 +119,7 @@ module Rediscator
       props[:CLOUDWATCH_USER] = CLOUDWATCH_USER
       create_user props[:CLOUDWATCH_USER], :description => 'Amazon Cloudwatch monitor'
 
-      install_cloudwatch_tools :cloudwatch_access_key_id => aws_access_key, :cloudwatch_secret_key => aws_secret_key
+      install_cloudwatch_gems :cloudwatch_access_key_id => aws_access_key, :cloudwatch_secret_key => aws_secret_key
 
       setup_monitors_and_alarms :cloudwatch_namespace => options[:cloudwatch_namespace],
         :cloudwatch_access_key_id => aws_access_key,
@@ -403,7 +397,7 @@ secret_key = #{s3_secret_key}
     end
 
 
-    def install_cloudwatch_tools(opts)
+    def install_cloudwatch_gems(opts)
       cloudwatch_access_key_id = opts[:cloudwatch_access_key_id] or raise ArgumentError, 'must specify :cloudwatch_access_key_id'
       cloudwatch_secret_key = opts[:cloudwatch_secret_key] or raise ArgumentError, 'must specify :cloudwatch_secret_key'
 
@@ -416,48 +410,11 @@ gem 'right_aws', '~> 2.2.0', :git => #{RIGHT_AWS_REPO.inspect}
           GEMFILE
           run! *%w(bundle install)
 
-          run! *%w(mkdir -p opt)
-          inside 'opt' do
-            if Dir.glob('CloudWatch-*/bin/mon-put-data').empty?
-              run! :wget, '-q', CLOUDWATCH_TOOLS_URL unless File.exists? CLOUDWATCH_TOOLS_ZIP
-              run! :unzip, CLOUDWATCH_TOOLS_ZIP
-            end
-            cloudwatch_dirs = Dir.glob('CloudWatch-*').select {|dir| File.directory? dir }
-            case cloudwatch_dirs.size
-            when 1; cloudwatch_dir = cloudwatch_dirs[0]
-            when 0; raise 'Failed to install CloudWatch tools!'
-            else; raise 'Multiple versions of CloudWatch tools installed; confused.'
-            end
-
-            props[:CLOUDWATCH_TOOLS_PATH] = "#{Dir.pwd}/#{cloudwatch_dir}"
-          end
-
           props[:CLOUDWATCH_AWS_CREDENTIALS_PATH] = "#{Dir.pwd}/.aws-credentials"
           create_file! props[:CLOUDWATCH_AWS_CREDENTIALS_PATH], <<-CREDS, :permissions => '600'
 AWSAccessKeyId=#{cloudwatch_access_key_id}
 AWSSecretKey=#{cloudwatch_secret_key}
           CREDS
-
-          run! *%w(mkdir -p bin)
-
-          env_vars = [
-            [:JAVA_HOME, OPENJDK_JAVA_HOME],
-            [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
-            [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
-            [:AWS_CREDENTIAL_FILE, props[:CLOUDWATCH_AWS_CREDENTIALS_PATH]],
-          ]
-          env_vars_script = (%w(#!/bin/sh) + env_vars.map do |var, value|
-            "#{var}=#{value}; export #{var}"
-          end).join("\n")
-          props[:CLOUDWATCH_ENV] = env_vars.map do |var, value|
-            # run! doesn't expand $SHELL_VARIABLES, so we have to do it.
-            expanded = value.
-              gsub('$PATH', ENV['PATH']).
-              gsub('$AWS_CLOUDWATCH_HOME', props[:CLOUDWATCH_TOOLS_PATH])
-            [var, expanded]
-          end
-
-          create_file!  'bin/aws-cloudwatch-env-vars.sh', env_vars_script, :permissions => '+rwx'
         end
       end
     end
@@ -525,21 +482,18 @@ acw = RightAws::AcwInterface.new(aws_access_key_id, aws_secret_access_key, :logg
             instance_id = system!(*%w(curl -s http://169.254.169.254/latest/meta-data/instance-id)).strip
             custom_metric_dimensions[:InstanceId] = builtin_metric_dimensions[:InstanceId] = instance_id
           end
-          props[:CLOUDWATCH_DIMENSIONS] = cloudwatch_dimensions(custom_metric_dimensions)
+
+          acw = RightAws::AcwInterface.new(cloudwatch_access_key_id, cloudwatch_secret_key)
 
           shared_alarm_options = {
-            :cloudwatch_tools_path => props[:CLOUDWATCH_TOOLS_PATH],
-            :env_vars => props[:CLOUDWATCH_ENV],
-
             :dimensions => custom_metric_dimensions,
+            :period => 60,
+            :evaluation_periods => 5,
           }
           if topic
             props[:SNS_TOPIC] = topic
             shared_alarm_options.merge!({
-              :actions_enabled => true,
-              :ok_actions => topic,
-              :alarm_actions => topic,
-              :insufficient_data_actions => topic,
+              :actions => {:ok => topic, :alarm => topic, :insufficient_data => topic},
             })
           else
             props[:SNS_TOPIC] = "<WARNING: No SNS topic specified.  You will not get notified of alarm states.>"
@@ -594,19 +548,18 @@ acw.put_metric_data(
                         when :<, :<=; 'low'
                         end
               alarm_options = shared_alarm_options.merge({
-                :alarm_name => "#{props[:MACHINE_NAME]}: #{friendly}",
-                :alarm_description => "Alerts if #{props[:MACHINE_ROLE]} machine #{props[:MACHINE_NAME]} has #{symptom} #{friendly}.",
+                :description => "Alerts if #{props[:MACHINE_ROLE]} machine #{props[:MACHINE_NAME]} has #{symptom} #{friendly}.",
 
                 :namespace => namespace,
                 :metric_name => metric,
                 :dimensions => dimensions,
 
-                :comparison_operator => comparison,
-                :threshold => threshold,
                 :unit => unit,
               })
 
-              setup_cloudwatch_alarm! alarm_options
+              acw.put_metric_alarm "#{props[:MACHINE_NAME]}: #{friendly}",
+                comparison, threshold,
+                alarm_options
             end
           end
 

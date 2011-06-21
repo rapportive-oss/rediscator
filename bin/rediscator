@@ -24,10 +24,13 @@ RUBY=$(which ruby)
 BUNDLE=$(which bundle)
 [ $? = 0 ] || { echo "Bundler is missing!  Run '$0 --setup-ruby'." >&2; exit 3; }
 
-pushd "$(dirname $0)/.." && "$BUNDLE" install --quiet; popd
+sudo apt-get install -y git-core # for gems
 
-exec "$RUBY" \
+export BUNDLE_GEMFILE="$(dirname $0)/../Gemfile"
+"$BUNDLE" install --quiet
+
+exec "$BUNDLE" exec "$RUBY" \
   -rubygems \
   -I"$(dirname $0)/../lib" \
-  -e 'require "bundler/setup"; require "rediscator"; $0 = "rediscator"; Rediscator::App.start' \
+  -e 'require "rediscator"; $0 = "rediscator"; Rediscator::App.start' \
   "$@"
