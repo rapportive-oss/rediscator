@@ -52,7 +52,7 @@ module Rediscator
         :MACHINE_NAME => options[:machine_name],
         :MACHINE_ROLE => options[:machine_role],
       }
-      @rediscator_path = File.join(Dir.pwd, File.dirname(__FILE__), '..', '..')
+      @rediscator_path = File.join(File.dirname(__FILE__), '..', '..')
     end
 
 
