@@ -25,8 +25,6 @@ module Rediscator
       heirloom-mailx
     )
 
-    OPENJDK_JAVA_HOME = '/usr/lib/jvm/java-6-openjdk'
-
     REDIS_USER = 'redis'
     REDIS_LOG = '/var/log/redis.log'
 
@@ -404,6 +402,8 @@ secret_key = #{s3_secret_key}
       cloudwatch_access_key_id = opts[:cloudwatch_access_key_id] or raise ArgumentError, 'must specify :cloudwatch_access_key_id'
       cloudwatch_secret_key = opts[:cloudwatch_secret_key] or raise ArgumentError, 'must specify :cloudwatch_secret_key'
 
+      java_home = system!('update-java-alternatives -l | head -1 | cut -d" " -f3').strip
+
       as props[:CLOUDWATCH_USER] do
         inside "~#{props[:CLOUDWATCH_USER]}" do
           run! *%w(mkdir -p opt)
@@ -431,7 +431,7 @@ AWSSecretKey=#{cloudwatch_secret_key}
           run! *%w(mkdir -p bin)
 
           env_vars = [
-            [:JAVA_HOME, OPENJDK_JAVA_HOME],
+            [:JAVA_HOME, java_home],
             [:AWS_CLOUDWATCH_HOME, props[:CLOUDWATCH_TOOLS_PATH]],
             [:PATH, %w($PATH $AWS_CLOUDWATCH_HOME/bin).join(':')],
             [:AWS_CREDENTIAL_FILE, props[:CLOUDWATCH_AWS_CREDENTIALS_PATH]],
